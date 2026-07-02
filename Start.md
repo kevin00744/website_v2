@@ -1,99 +1,196 @@
-# 啟動 / 關閉專案
+# 啟動 / 關閉專案（website_v2）
 
-> website_v2 跟 `cms` 是完全獨立的兩套系統（不同 container 名稱、不同 network、不同 port、不同資料庫），兩邊可以同時開著互不影響。
+> **系統概述**：NestJS（API）+ Next.js 14（Web）+ PostgreSQL 16，Puck 拖拉式區塊編輯器。
+> cms（Version 1 / Laravel）已停用（`docker compose stop`），容器保留可隨時復原，但 port 80 現在由 website_v2 使用。
 
-## 開啟（每次要開發時）
+---
+
+## 一、每次開發前：啟動容器
 
 ```bash
 cd /Users/tsanyen/Documents/website/website_v2
 docker compose up -d
 ```
 
-確認所有容器都正常啟動：
+確認三個容器都正常：
 
 ```bash
 docker compose ps
 ```
 
-應該看到 `website_v2_web`、`website_v2_api`、`website_v2_db` 都是 `running`（`website_v2_db` 要等到 `healthy` 才算真的可以連線）。
+預期狀態：
 
-> ⚠️ 目前 `web`/`api` 容器只是用乾淨的 `node:20-alpine` image 掛載原始碼待命（執行 `tail -f /dev/null`），**不會自動安裝套件或啟動服務**。第一次使用，或是 `package.json` 有更新時，要照下面「進容器手動操作」的步驟跑一次。
+| 名稱 | 狀態 | Port |
+|------|------|------|
+| `website_v2_web` | Up | `80:3000` |
+| `website_v2_api` | Up | `3101:3000` |
+| `website_v2_db` | Up (healthy) | `5433:5432` |
 
-### 進容器手動操作（第一次 / 套件有更新時）
+> `api` 容器每次啟動會自動執行 `apt-get install openssl procps`（寫在 docker-compose.yml 的 command），等幾秒讓這步完成後再進容器。
+
+---
+
+## 二、首次安裝 / 套件有更新時
+
+容器啟動後**不會**自動安裝套件或啟動開發伺服器，首次使用或 `package.json` 有變動時，要手動執行以下步驟。
+
+### 2-1 API（NestJS）
 
 ```bash
-# api：安裝套件、產生 Prisma Client、建表、啟動開發伺服器
 docker compose exec api sh
 npm install
 npx prisma generate
-npx prisma migrate dev --name init
-npm run start:dev
+npx prisma migrate deploy        # 套用所有 migration（不互動）
+npx prisma db seed               # 建立種子帳號 + 預設門店 + 免責聲明範本
+npm run start:dev                # 在前景跑（要看 log 用這個）
 ```
 
-開另一個終端機視窗測試 API 是否活著：
+或背景跑（不用卡著終端機）：
 
 ```bash
-curl http://localhost:3101/api/v2/signature/1/verify
-# 預期回應：{ "code": "SIGNATURE_NOT_FOUND" }
+docker compose exec -d api sh -c "npm run start:dev > /tmp/api-dev.log 2>&1"
 ```
 
+確認 API 活著：
+
 ```bash
-# web（Next.js，目前只有佔位頁面，尚未開發 kiosk/CRM/簽署畫面）
+curl http://localhost:3101/api/v2/cms/pages/home 2>/dev/null | head -c 200
+# 預期回 404 JSON（page 還沒建）或正常的 JSON 內容
+```
+
+### 2-2 Web（Next.js）
+
+開另一個終端機：
+
+```bash
 docker compose exec web sh
 npm install
-npm run dev
+npm run dev                      # 在前景跑
+```
+
+或背景跑：
+
+```bash
+docker compose exec web sh -c "cd /workspace/apps/web && npm run dev > /tmp/web-dev.log 2>&1" &
 ```
 
 開啟瀏覽器：
 
-- 前台官網：http://localhost:3100
-- 店員後台：http://localhost:3100/customers（佔位頁）
-- API：http://localhost:3101/api/v2/*
+| 用途 | 網址 |
+|------|------|
+| 前台官網 | http://localhost |
+| 後台管理 | http://localhost/admin |
+| API | http://localhost:3101/api/v2/ |
 
-## 關閉（用完之後）
+---
 
-```bash
-cd /Users/tsanyen/Documents/website/website_v2
-docker compose stop
-```
+## 三、種子帳號（seed 後建立）
 
-> `docker compose stop` 只是停止容器，資料庫內容會保留，下次 `docker compose up -d` 即可繼續使用（但 `api`/`web` 容器內手動裝好的 `node_modules` 也還在，不用重新 `npm install`，除非容器被 `down` 掉重建）。
+種子帳號密碼統一：**`Passw0rd!1`**
 
-### 完全移除容器（不會用到才需要）
+| Email | 角色 | 說明 |
+|-------|------|------|
+| `system@website-v2.local` | system_admin | 最高權限 |
+| `admin@website-v2.local` | admin | 管理員（注意：曾被測試刪除，可能 soft-deleted） |
+| `dealer-north@website-v2.local` | dealer | 北區經銷商 |
+| `manager-default@website-v2.local` | manager | 預設門店店長 |
+| `editor@website-v2.local` | editor | 網站編輯 |
 
-```bash
-docker compose down
-```
+> **Kevin 的正式帳號**：`kevin00744@gmail.com`（system_admin），**不是種子帳號**，需要在後台或用 Prisma 手動建立，或登入後從「個人設定」更改密碼。
 
-> 這會移除容器但保留資料庫資料（volume 還在）。如果要連資料庫資料一起清空，才需要加 `-v`：
-> ```bash
-> docker compose down -v
-> ```
-> ⚠️ 加 `-v` 會清空 `website_v2_db` 所有資料（不會動到 `cms_db`），請小心使用。
+---
 
-## 重啟（修改 docker-compose.yml 或遇到異常時）
-
-```bash
-docker compose restart
-```
-
-或針對單一服務重啟，例如只重啟 api：
+## 四、重新進行 DB Migration（Schema 有變更時）
 
 ```bash
-docker compose restart api
+docker compose exec api sh
+npx prisma migrate dev --name <描述這次變更>
 ```
 
-> 注意：重啟容器不會重新跑 `npm install`，容器內的 `node_modules` 是裝在掛載的原始碼資料夾裡，重啟後還在；但 `npm run start:dev` 這個前景指令會中斷，需要重新 `docker compose exec api npm run start:dev` 啟動。
+例如：
 
-## 查看即時日誌（排查問題用）
+```bash
+npx prisma migrate dev --name add_new_feature
+```
+
+---
+
+## 五、常用維運指令
+
+### 查看即時 log
 
 ```bash
 docker compose logs -f api
+docker compose logs -f web
 docker compose logs -f db
 ```
 
-## 常見問題
+### 進容器除錯
 
-- **`docker compose exec api sh` 進去後找不到 `node_modules`**：代表還沒跑過 `npm install`，照上面步驟跑一次即可。
-- **改了 `prisma/schema.prisma` 之後資料庫沒反應**：要重新進 `api` 容器跑 `npx prisma migrate dev --name <隨意命名這次變更>`。
-- **`api`/`web` 顯示 `port already in use`**：通常是本機其他程式佔用 `3100`/`3101`/`5433`，可在 `docker-compose.yml` 改成其他對外 port（容器內部 port 不用動）。
+```bash
+docker compose exec api sh
+docker compose exec web sh
+docker compose exec db psql -U website_v2_user -d website_v2
+```
+
+### 確認 API 功能正常
+
+```bash
+# 登入取得 token
+curl -s -X POST http://localhost:3101/api/v2/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"system@website-v2.local","password":"Passw0rd!1"}' | python3 -m json.tool
+
+# 前台搜尋
+curl -s "http://localhost:3101/api/v2/cms/search?q=璨妍" | python3 -m json.tool
+```
+
+---
+
+## 六、關閉 / 重啟
+
+```bash
+# 停止（保留 node_modules 和 DB 資料）
+docker compose stop
+
+# 重新啟動（下次開工用這個）
+docker compose up -d
+
+# 完全移除容器（保留 DB volume）
+docker compose down
+
+# 連 DB 資料一起清空（⚠️ 不可逆）
+docker compose down -v
+```
+
+> `docker compose stop` 只停容器，`node_modules` 和 DB 資料都保留；下次 `docker compose up -d` 後，`api` 容器裡的程式需要重新手動啟動（`npm run start:dev`），因為上次的前景行程已中斷。
+
+---
+
+## 七、環境說明
+
+| 變數 | 設定位置 | 說明 |
+|------|----------|------|
+| `DATABASE_URL` | api 容器 env | `postgresql://website_v2_user:secret@db:5432/website_v2` |
+| `JWT_SECRET` | api 容器 env | 預設 `dev-only-insecure-secret-change-in-production`，正式環境務必覆寫 |
+| `CMS_API_INTERNAL_URL` | web 容器 env | `http://api:3000/api/v2`（僅供 SSR/Rewrite 用） |
+| `NEXT_PUBLIC_API_BASE_URL` | **刻意不設** | 瀏覽器端的 `resolveApiBaseUrl()` 會依 `window.location.hostname` 動態組出 `:3101`，確保外網也能運作 |
+
+---
+
+## 八、常見問題
+
+**`npm install` 後 `node_modules` 消失？**
+→ `node_modules` 裝在被掛載的 `/workspace`（本機目錄），容器 `down` 再 `up` 後還在；如果整個移除了才需要重裝。
+
+**改了 `prisma/schema.prisma` 後資料庫沒反應？**
+→ 進 `api` 容器跑 `npx prisma migrate dev --name <說明>`。
+
+**前台圖片不顯示？**
+→ 圖片走 Next.js rewrite proxy（`/api/v2/cms/uploads/*` → api 容器），DB 裡存相對路徑。確認 `web` 的 Next.js 正在跑。
+
+**外網（手機/其他裝置）登入失敗？**
+→ 確認 `docker-compose.yml` 裡沒有 `NEXT_PUBLIC_API_BASE_URL=http://localhost:...`（目前刻意不設此變數）。
+
+**`api` 容器重建後 `npm run start:dev` 找不到 `openssl`？**
+→ 等容器啟動指令的 `apt-get install openssl procps` 跑完（約 10–30 秒），再進容器。
