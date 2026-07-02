@@ -1,0 +1,8 @@
+{
+  "name": "website-v2",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}

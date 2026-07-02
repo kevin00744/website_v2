@@ -1,0 +1,6 @@
+{
+  "name": "@website-v2/copy",
+  "version": "0.1.0",
+  "private": true,
+  "main": "zh-TW.ts"
+}

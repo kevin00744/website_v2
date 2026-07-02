@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.next/
+.env
+*.log
+
+# 字型檔案太大不適合進 git，重新取得方式見 apps/api/assets/fonts/README.md
+apps/api/assets/fonts/*.ttf
+apps/api/assets/fonts/*.otf

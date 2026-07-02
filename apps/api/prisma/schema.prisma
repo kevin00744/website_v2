@@ -1,0 +1,534 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  system_admin
+  admin
+  editor
+  dealer
+  manager
+}
+
+enum Region {
+  north
+  central
+  south
+}
+
+enum DocumentType {
+  disclaimer
+  id_document
+}
+
+enum SignerRole {
+  customer
+  staff
+}
+
+enum InventoryMovementType {
+  restock
+  consumption
+  adjustment
+  transfer_in
+  transfer_out
+}
+
+enum ConversationType {
+  inventory_request
+  customer_inquiry
+  general_chat
+}
+
+enum ConversationStatus {
+  open
+  resolved
+}
+
+/// WebSocket 廣播「送達/已讀」事件時更新此欄位，前端不需要自己拿 lastReadAt 時間戳
+/// 去回推每一則訊息的已讀狀態，直接讀 Message.status 即可。
+enum MessageStatus {
+  sent
+  delivered
+  read
+}
+
+model User {
+  id        Int       @id @default(autoincrement())
+  name      String
+  email     String    @unique
+  password  String
+  role      Role
+  phone     String?
+  storeId   Int?      @map("store_id")
+  store     Store?    @relation(fields: [storeId], references: [id])
+  region    Region?
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  createdCustomers               Customer[]  @relation("CreatedBy")
+  disclaimerStaffSignedCustomers Customer[]  @relation("DisclaimerStaff")
+  documentStaffSignedCustomers   Customer[]  @relation("DocumentStaff")
+  signatures                     Signature[]
+
+  inventoryLogs              InventoryLog[]
+  restockRequestsRequested   RestockRequest[]         @relation("RestockRequestedBy")
+  restockRequestsCompleted   RestockRequest[]         @relation("RestockCompletedBy")
+  forwardedContactMessages   ContactMessage[]         @relation("ContactMessageForwardedBy")
+  createdConversations       Conversation[]           @relation("ConversationCreator")
+  resolvedConversations    Conversation[]            @relation("ConversationResolver")
+  conversationParticipants ConversationParticipant[]
+  messages                 Message[]
+
+  chatContactPermissionsOwned     ChatContactPermission[] @relation("ChatContactPermissionOwner")
+  chatContactPermissionsAsContact ChatContactPermission[] @relation("ChatContactPermissionContact")
+  chatContactPermissionsCreated   ChatContactPermission[] @relation("ChatContactPermissionCreator")
+
+  @@map("users")
+}
+
+model Store {
+  id             Int       @id @default(autoincrement())
+  code           String    @unique
+  name           String
+  region         Region
+  regionSequence Int       @map("region_sequence")
+  phone          String?
+  address        String?
+  note           String?
+  isActive       Boolean   @default(true) @map("is_active")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  deletedAt      DateTime? @map("deleted_at")
+
+  users     User[]
+  customers Customer[]
+
+  inventory       StoreInventory[]
+  inventoryLogs   InventoryLog[]
+  conversations   Conversation[]
+  restockRequests RestockRequest[]
+  contactMessages ContactMessage[]
+
+  @@map("stores")
+}
+
+model Customer {
+  id           Int     @id @default(autoincrement())
+  name         String
+  phone        String?
+  line         String?
+  email        String?
+  address      String?
+  note         String?
+  nationalId   String? @unique @map("national_id")
+  customerCode String? @unique @map("customer_code")
+
+  storeId   Int   @map("store_id")
+  store     Store @relation(fields: [storeId], references: [id])
+  createdBy Int   @map("created_by")
+  creator   User  @relation("CreatedBy", fields: [createdBy], references: [id])
+
+  // 文件（上傳照片合成的 PDF）路徑，跟下面的 disclaimer 是兩份獨立的東西：
+  // disclaimer 是固定法律文字＋電子簽名（沒有真正的「掃描檔」），document 是真的有一份 PDF 檔案要雙方簽。
+  documentPath String? @map("document_path")
+
+  // 免責聲明書 PDF 路徑（依 DisclaimerTemplate.sections 動態排版產生，每次簽署後覆寫存檔）
+  disclaimerPath String? @map("disclaimer_path")
+
+  // 快取欄位：永遠指向 signatures 表裡最新一筆對應紀錄，真正證據在 Signature 表
+  documentCustomerSignedAt DateTime? @map("document_customer_signed_at")
+  documentStaffSignedAt    DateTime? @map("document_staff_signed_at")
+  documentStaffId          Int?      @map("document_staff_id")
+  documentStaff            User?     @relation("DocumentStaff", fields: [documentStaffId], references: [id])
+
+  disclaimerCustomerSignedAt DateTime? @map("disclaimer_customer_signed_at")
+  disclaimerStaffSignedAt    DateTime? @map("disclaimer_staff_signed_at")
+  disclaimerStaffId          Int?      @map("disclaimer_staff_id")
+  disclaimerStaff            User?     @relation("DisclaimerStaff", fields: [disclaimerStaffId], references: [id])
+
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
+
+  signatures Signature[]
+
+  inventoryLogs InventoryLog[]
+
+  @@index([name])
+  @@index([phone])
+  @@map("customers")
+}
+
+/// Append-only：應用層與 DB 權限都不開放 UPDATE/DELETE，重新簽名一律新增一筆。
+model Signature {
+  id         Int      @id @default(autoincrement())
+  customerId Int      @map("customer_id")
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  documentType DocumentType @map("document_type")
+  signerRole   SignerRole   @map("signer_role")
+
+  signerUserId Int?  @map("signer_user_id") // 顧客簽名時為 null
+  signerUser   User? @relation(fields: [signerUserId], references: [id])
+
+  signatureImageUrl   String @map("signature_image_url") // 物件儲存路徑，非 base64 進 DB
+  signaturePointsJson Json?  @map("signature_points_json")
+
+  contentSnapshot Json   @map("content_snapshot") // 簽署當下的聲明書內容快照，凍結版本
+  contentHash     String @map("content_hash") // SHA-256(contentSnapshot)
+  recordHash      String @map("record_hash") // SHA-256(上述所有欄位串接)，用於事後完整性驗證
+
+  signedAt   DateTime @map("signed_at")
+  ipAddress  String?  @map("ip_address")
+  userAgent  String?  @map("user_agent")
+  deviceInfo String?  @map("device_info")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  // 沒有 updatedAt、沒有 deletedAt — 此表禁止 UPDATE/DELETE
+
+  @@index([customerId, documentType])
+  @@map("signatures")
+}
+
+/// 免責聲明書條款內容，管理員之後可在後台修改文字（編輯介面尚未實作，目前先靠 seed/直接改 DB）。
+/// 每次「修改」是新增一筆新 version 並把舊的 isActive 設為 false，不直接覆寫舊內容——
+/// 因為已經簽署過的 Signature.contentSnapshot 是凍結副本，不受條款之後被修改影響，
+/// 但這張表本身保留每個版本的歷史，方便對帳「這次簽的到底是哪一版條款」。
+model DisclaimerTemplate {
+  id        Int      @id @default(autoincrement())
+  version   String   @unique
+  title     String
+  /// DisclaimerSection[]：[{ heading, paragraphs: string[], requiresSignature: boolean }]
+  /// requiresSignature 是「未來簡單設定簽名位置」的機制本身——管理員之後編輯內容時
+  /// 只要切換這個布林值，PDF 排版引擎（disclaimer-pdf.util.ts）就會自動在這段後面
+  /// 加一個簽名錨點，完全不需要手動指定任何 x/y 座標。
+  sections  Json
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("disclaimer_templates")
+}
+
+/// 商品目錄，僅 admin 以上維護。SKU 唯一，供 StoreInventory / InventoryLog 引用。
+model Product {
+  id          Int       @id @default(autoincrement())
+  sku         String    @unique
+  name        String
+  unit        String?
+  description String?
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+
+  storeInventory  StoreInventory[]
+  inventoryLogs   InventoryLog[]
+  restockRequests RestockRequest[]
+
+  @@map("products")
+}
+
+/// 每個 (store, product) 只會有一筆現有庫存快取列；真實異動歷史在 InventoryLog，
+/// 這張表只是「目前數量」的查詢用快取，數量不可為負由應用層保證，schema 不強制。
+model StoreInventory {
+  id        Int     @id @default(autoincrement())
+  storeId   Int     @map("store_id")
+  store     Store   @relation(fields: [storeId], references: [id])
+  productId Int     @map("product_id")
+  product   Product @relation(fields: [productId], references: [id])
+
+  quantity Int @default(0)
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([storeId, productId])
+  @@map("store_inventories")
+}
+
+/// 庫存異動的帳本：每次進貨/消耗/調整/調撥都新增一筆，用來事後重算/對帳
+/// StoreInventory.quantity 是否正確。quantity 一律為正數，方向/語意由 type 決定
+/// （而非用正負號表示方向）——這樣 adjustment（盤點校正，方向不固定）才不會跟
+/// restock/consumption 混淆，對帳時可直接用 type 篩選做 SUM，不依賴正負號慣例。
+model InventoryLog {
+  id       Int                   @id @default(autoincrement())
+  type     InventoryMovementType
+  quantity Int
+
+  storeId   Int     @map("store_id")
+  store     Store   @relation(fields: [storeId], references: [id])
+  productId Int     @map("product_id")
+  product   Product @relation(fields: [productId], references: [id])
+
+  performedBy Int  @map("performed_by")
+  performer   User @relation(fields: [performedBy], references: [id])
+
+  /// 店長在顧客身上消耗庫存（如療程用掉一單位）時連結到該顧客；
+  /// 進貨/調撥等不涉及顧客的異動則為 null，故必須是 optional。
+  customerId Int?      @map("customer_id")
+  customer   Customer? @relation(fields: [customerId], references: [id])
+
+  reason String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  // 無 updatedAt/deletedAt：此表是異動帳本，不可修改既有紀錄
+
+  @@index([storeId, productId])
+  @@index([storeId, createdAt])
+  @@index([customerId])
+  @@map("inventory_logs")
+}
+
+/// 分店向「同區經銷商」提出的補貨請求：店長提出時不是直接異動庫存（庫存異動要等貨真的到了，
+/// 由店長另外用 InventoryLog 的 restock 類型記一筆），這張表純粹是「請求／待辦」的追蹤，
+/// 經銷商在自己的庫存管理畫面看到這些請求，補完貨之後勾選完成——isCompleted 只是一個待辦
+/// 打勾狀態，不會自動連動任何庫存數字異動。
+model RestockRequest {
+  id        Int     @id @default(autoincrement())
+  storeId   Int     @map("store_id")
+  store     Store   @relation(fields: [storeId], references: [id])
+  productId Int     @map("product_id")
+  product   Product @relation(fields: [productId], references: [id])
+
+  quantity Int
+  note     String?
+
+  requestedBy Int  @map("requested_by")
+  requester   User @relation("RestockRequestedBy", fields: [requestedBy], references: [id])
+
+  isCompleted Boolean   @default(false) @map("is_completed")
+  completedAt DateTime? @map("completed_at")
+  completedBy Int?      @map("completed_by")
+  completer   User?     @relation("RestockCompletedBy", fields: [completedBy], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([storeId, isCompleted])
+  @@map("restock_requests")
+}
+
+enum InquiryCategoryKind {
+  /// 加盟諮詢：訊息自動讓「所在地區對應的經銷商」看到，經銷商直接處理，不會轉給特定分店
+  franchise
+  /// 體驗諮詢：訊息先讓所在地區的經銷商看到，經銷商視情況轉給特定分店（manager 才看得到）
+  experience
+  /// 其他：保留彈性，之後後台新增類別預設用這個，不會自動分派給任何人，只有 admin 看得到
+  other
+}
+
+/// 「聯絡我們」表單的詢問類別，後台可以新增/編輯/上下架——kind 決定這個類別建立的訊息要怎麼分派
+/// （見 ContactMessage 的說明），不是單純的顯示文字而已。
+model InquiryCategory {
+  id        Int                 @id @default(autoincrement())
+  name      String
+  kind      InquiryCategoryKind @default(other)
+  isActive  Boolean             @default(true) @map("is_active")
+  sortOrder Int                 @default(0) @map("sort_order")
+  createdAt DateTime            @default(now()) @map("created_at")
+  updatedAt DateTime            @updatedAt @map("updated_at")
+
+  messages ContactMessage[]
+
+  @@map("inquiry_categories")
+}
+
+/// 前台「聯絡我們」頁面送出的表單訊息。region 是從訪客填的台灣縣市（city）換算出來的
+/// 北/中/南分區，跟 Store.region／User.region 是同一套三分區，分派經銷商時才能直接比對——
+/// city 本身只是給後台顯示「訪客實際填的縣市」，分派邏輯一律看 region。
+model ContactMessage {
+  id       Int     @id @default(autoincrement())
+  name     String
+  phone    String?
+  email    String?
+  city     String
+  region   Region
+  message  String?
+
+  categoryId Int
+  category   InquiryCategory @relation(fields: [categoryId], references: [id])
+
+  /// 體驗諮詢被經銷商轉給特定分店後才會有值；加盟諮詢/其他類別不會用到這兩個欄位
+  storeId     Int?      @map("store_id")
+  store       Store?    @relation(fields: [storeId], references: [id])
+  forwardedAt DateTime? @map("forwarded_at")
+  forwardedBy Int?      @map("forwarded_by")
+  forwarder   User?     @relation("ContactMessageForwardedBy", fields: [forwardedBy], references: [id])
+
+  isHandled Boolean  @default(false) @map("is_handled")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([region, categoryId])
+  @@index([storeId])
+  @@map("contact_messages")
+}
+
+/// 以主題為單位的內部訊息串（調貨需求／顧客表單詢問／一般聊天）。
+model Conversation {
+  id     Int                @id @default(autoincrement())
+  type   ConversationType
+  status ConversationStatus @default(open)
+  title  String
+
+  creatorId Int  @map("creator_id")
+  creator   User @relation("ConversationCreator", fields: [creatorId], references: [id])
+
+  storeId Int   @map("store_id")
+  store   Store @relation(fields: [storeId], references: [id])
+
+  /// 結案稽核：「這個調貨需求是誰結的、何時結的」，內部工單常見的查證需求，
+  /// 現在加比之後 retrofit 容易（不需要對舊資料補預設值）。
+  resolvedAt DateTime? @map("resolved_at")
+  resolvedBy Int?      @map("resolved_by")
+  resolver   User?     @relation("ConversationResolver", fields: [resolvedBy], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@index([storeId, status])
+  @@map("conversations")
+}
+
+/// Conversation/User 多對多 join table。lastReadAt 是 WebSocket 已讀事件的計算基準：
+/// 訊息 createdAt > participant.lastReadAt 即為該使用者尚未讀取，前端未讀數字/已讀勾勾都靠這個欄位算；
+/// joinedAt 記錄何時被加入此對話，供稽核用。
+model ConversationParticipant {
+  id Int @id @default(autoincrement())
+
+  conversationId Int          @map("conversation_id")
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+
+  userId Int  @map("user_id")
+  user   User @relation(fields: [userId], references: [id])
+
+  joinedAt   DateTime  @default(now()) @map("joined_at")
+  lastReadAt DateTime? @map("last_read_at")
+
+  @@unique([conversationId, userId])
+  @@map("conversation_participants")
+}
+
+/// 對話內的單則訊息。v1 不支援編輯/刪除（內部工具，刻意保持簡單）。
+/// status 是給 WebSocket 即時更新用的（sent → delivered → read），
+/// attachmentUrl 是 nullable——純文字訊息不需要檔案，調貨需求/顧客表單截圖才會帶。
+model Message {
+  id Int @id @default(autoincrement())
+
+  conversationId Int          @map("conversation_id")
+  conversation   Conversation @relation(fields: [conversationId], references: [id])
+
+  senderId Int  @map("sender_id")
+  sender   User @relation(fields: [senderId], references: [id])
+
+  body   String
+  status MessageStatus @default(sent)
+
+  /// 圖片/檔案儲存路徑，沿用 customer-file-storage.util.ts 的本機儲存模式
+  /// （之後換 S3/MinIO 物件儲存時，呼叫端完全不用改）。
+  attachmentUrl  String? @map("attachment_url")
+  attachmentType String? @map("attachment_type")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+/// 經銷商/店長預設只看得到「自己的上游與下游」（沿用 ChatService 內算出來的 region/store 規則），
+/// 這張表是 admin/system_admin 用來覆寫某個 user 預設清單的明細——
+/// 一旦這個 user 在這張表裡有任何一筆紀錄，就代表「改用這份清單」取代預設算法，
+/// 不是「在預設清單之外額外加人」，所以管理畫面儲存時是整批覆寫（先刪全部、再寫入新的一份），
+/// 不提供單筆增減 API，避免「現在到底是預設還是被改過、改了哪幾筆」這種狀態難以追蹤。
+/// 把這份覆寫清空（刪掉所有列）就等於「恢復預設」，不需要額外的 isDefault 旗標欄位。
+model ChatContactPermission {
+  id Int @id @default(autoincrement())
+
+  userId Int  @map("user_id")
+  user   User @relation("ChatContactPermissionOwner", fields: [userId], references: [id])
+
+  contactUserId Int  @map("contact_user_id")
+  contactUser   User @relation("ChatContactPermissionContact", fields: [contactUserId], references: [id])
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// 哪個 admin/system_admin 設定的，供稽核「這份覆寫清單是誰調整的」
+  createdBy Int  @map("created_by")
+  creator   User @relation("ChatContactPermissionCreator", fields: [createdBy], references: [id])
+
+  @@unique([userId, contactUserId])
+  @@map("chat_contact_permissions")
+}
+
+/// 拖拉式建置器的頁面資料：content 是編輯器產出的區塊/樣式結構（取代 Version 1 的 data.json 檔案），
+/// 前台用 slug 查已發布版本渲染，後台用同一張表的 isPublished 控制要不要曝光給前台。
+model Page {
+  id              Int      @id @default(autoincrement())
+  slug            String   @unique
+  title           String
+  metaDescription String?  @map("meta_description")
+  content         Json
+  isPublished     Boolean  @default(false) @map("is_published")
+  /// 全站只會有一個頁面是首頁（"/" 顯示的內容）——在 service 層保證唯一性（設某頁為首頁時，
+  /// 自動把舊的首頁取消掉），不是用 DB 唯一索引限制，因為「目前沒有任何頁面是首頁」也是合法狀態。
+  isHomepage      Boolean  @default(false) @map("is_homepage")
+  /// 是否出現在前台導覽列（Nav Bar）；navOrder 決定排序（小的在前），同 order 用 id 當次要排序。
+  showInNav       Boolean  @default(true) @map("show_in_nav")
+  navOrder        Int      @default(0) @map("nav_order")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  articles        Article[]
+
+  @@map("pages")
+}
+
+/// 「版型」是預先排好的一組區塊（跟 Page.content 同一種 Puck JSON 結構），存成獨立的資料表
+/// 而不是寫死在前端程式碼裡，admin/system_admin 可以直接在後台用拖拉編輯器設計、儲存、之後
+/// 重複套用——跟建立 Page 時選的「內建版型」（blank/news-article/landing-page，純前端常數）
+/// 是互補關係：內建版型是程式碼層級的固定起手式，這張表是營運過程中可以持續累積的自訂版型庫。
+model PageTemplate {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  content     Json
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("page_templates")
+}
+
+/// 文章（最新消息/部落格）：跟 Page 是平行但獨立的概念——Page 是「整頁」（首頁/關於我們），
+/// Article 是「會持續累積、需要列表＋站內搜尋」的內容單位。content 一樣是 Puck 區塊 JSON，
+/// 可以重複使用同一套拖拉編輯器跟區塊庫。excerpt 是列表頁用的摘要（不用每次都把整篇 content
+/// 解析出來顯示），publishedAt 跟 isPublished 分開存：之後若要支援「排定發布時間」可以直接用
+/// publishedAt 排序/篩選，不用額外加欄位。
+model Article {
+  id          Int       @id @default(autoincrement())
+  slug        String    @unique
+  title       String
+  excerpt     String?
+  coverImageUrl String? @map("cover_image_url")
+  content     Json
+  isPublished Boolean   @default(false) @map("is_published")
+  publishedAt DateTime? @map("published_at")
+  /// 文章「要放在哪一個」頁面底下（例如美容原液頁面的相關文章），選填——刪掉那個頁面時只把
+  /// 這個欄位清空（SetNull），不會把文章也一起刪掉，文章本身是獨立存在的內容單位。
+  categoryPageId Int?     @map("category_page_id")
+  categoryPage   Page?    @relation(fields: [categoryPageId], references: [id], onDelete: SetNull)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@map("articles")
+}

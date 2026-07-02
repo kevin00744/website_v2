@@ -1,0 +1,97 @@
+# website_v2 — 與 cms（Version 1）完全隔離的本機開發環境。
+# cms 用的是 cms_app/cms_db/cms_nginx/cms_network、port 80/443/5432，但 v1 已經停用
+# （docker compose stop，容器還在、之後要復原可以直接 docker compose up 同一個資料夾），
+# web 服務現在改用 80 port 取代 v1，讓 http://localhost 直接打到 v2 的前台官網。
+# 這裡刻意用不同的 container 名稱、network、volume，避免兩套系統互相干擾。
+#
+# 開發模式說明：
+# 本機沒有安裝 Node，所以 api/web 兩個服務不用 build（那是給之後上線用的 Dockerfile），
+# 而是直接掛載原始碼資料夾進一個乾淨的 node:20 容器，容器啟動後保持待命（tail -f /dev/null），
+# 開發者用 `docker compose exec` 進容器手動跑 npm install / prisma migrate / npm run start:dev。
+# 這樣容器內部永遠看得到你本機編輯器存的最新檔案，不需要每次改 code 就重新 build image。
+#
+# 用 node:20-slim（Debian/glibc）而不是 node:20-alpine（musl）：
+# Prisma 的 schema-engine/query-engine 二進位檔在 Alpine 上常因抓不到對應版本的 OpenSSL
+# 而直接吐出非 JSON 的錯誤訊息（"Could not parse schema engine response"），換成 glibc base image
+# 可以完全避開這個相容性問題，不需要再手動裝 openssl。
+#
+# 掛載「整個 monorepo 根目錄」而不是只掛 apps/web、apps/api 各自的資料夾：
+# apps/web 透過 npm workspaces 依賴 packages/copy、packages/shared-types，npm 在解析
+# workspace 套件時需要往上找到根目錄的 package.json（裡面宣告了 workspaces），
+# 如果容器裡看不到 packages/ 跟根目錄的 package.json，npm install 會直接把它們當成
+# 「要去 npm registry 找的套件」，導致 404（@website-v2/copy 從來沒發布過，本來就找不到）。
+services:
+  web:
+    container_name: website_v2_web
+    image: node:20-slim
+    working_dir: /workspace/apps/web
+    volumes:
+      - .:/workspace
+    ports:
+      - "80:3000"
+    environment:
+      # 故意不設 NEXT_PUBLIC_API_BASE_URL：瀏覽器端的 apps/web/lib/api-client.ts 的
+      # resolveApiBaseUrl() 會在沒有這個環境變數時，自動依「訪客瀏覽器網址列目前的 hostname」
+      # （localhost、區網 IP、正式網域都適用）動態組出 API 網址——寫死成 http://localhost:3101
+      # 只對開發者自己在本機測試時碰巧是對的，外網訪客的瀏覽器收到這個字串時 localhost
+      # 永遠指向訪客自己的電腦，導致登入/聯絡表單等所有打 API 的功能全部失敗。
+      #
+      # 沒有 NEXT_PUBLIC_ 前綴，只給 Server Component/Route Handler 用：這些程式碼是在
+      # web 這個容器「裡面」執行的，localhost:3101 在容器內部解析不到 api 容器，要用
+      # docker compose 的服務名稱 api（內部網路）+ 容器內實際監聽的 port 3000。
+      - CMS_API_INTERNAL_URL=http://api:3000/api/v2
+    networks:
+      - website_v2_network
+    depends_on:
+      - api
+    command: sh -c "tail -f /dev/null"
+
+  api:
+    container_name: website_v2_api
+    image: node:20-slim
+    working_dir: /workspace/apps/api
+    volumes:
+      - .:/workspace
+    ports:
+      - "3101:3000"
+    environment:
+      - DATABASE_URL=postgresql://website_v2_user:secret@db:5432/website_v2
+      - PORT=3000
+      # 正式環境部署時務必覆寫成隨機長字串，這裡的 fallback（見 src/auth/jwt-secret.const.ts）只給本機開發用
+      - JWT_SECRET=${JWT_SECRET:-dev-only-insecure-secret-change-in-production}
+    networks:
+      - website_v2_network
+    depends_on:
+      db:
+        condition: service_healthy
+    # node:20-slim 是精簡版 Debian，預設沒裝 OpenSSL（Prisma 引擎要靠它載入）也沒裝 procps
+    # （`nest start --watch` 偵測到檔案變動要重啟時，內部會呼叫 `ps` 找子行程，沒裝會直接整個崩潰）。
+    # 寫進 command 而不是只手動 apt-get install，是因為容器被 down/recreate 後手動裝的東西會不見，
+    # 寫在這裡可以保證每次容器啟動都自動裝好，不需要每次重建都記得再做一次。
+    command: sh -c "apt-get update -qq && apt-get install -y -qq openssl procps > /dev/null && tail -f /dev/null"
+
+  db:
+    image: postgres:16-alpine
+    container_name: website_v2_db
+    environment:
+      POSTGRES_DB: website_v2
+      POSTGRES_USER: website_v2_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+    volumes:
+      - website_v2_db_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U website_v2_user -d website_v2"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - website_v2_network
+
+volumes:
+  website_v2_db_data:
+
+networks:
+  website_v2_network:
+    driver: bridge

@@ -1,0 +1,93 @@
+/**
+ * 白話文字典：API 回傳的語意化 error code -> 門市人員看得懂的句子。
+ * 規則：畫面上絕對不直接顯示 exception message/stack，一律經由這份字典轉譯。
+ * 任何新的 AppError code 都必須在這裡補一筆對應句子，否則前端會落到 DEFAULT。
+ */
+export const ERROR_COPY: Record<string, string> = {
+  CUSTOMER_PHONE_INVALID: '電話號碼好像少了一位數字喔，請再檢查一次',
+  CUSTOMER_NATIONAL_ID_INVALID: '身分證號碼格式不太對，請再檢查一次',
+  CUSTOMER_NAME_REQUIRED: '姓名不能空白，請填寫顧客姓名',
+  CUSTOMER_NATIONAL_ID_REQUIRED: '身分證字號不能空白，請填寫顧客身分證字號',
+  CUSTOMER_PHONE_EXISTS: '這個電話號碼已經有顧客資料了，要不要直接帶入他的資料？',
+  CUSTOMER_NATIONAL_ID_EXISTS: '這個身分證號碼已經有顧客資料了，要不要直接帶入他的資料？',
+  CUSTOMER_DUPLICATE: '系統裡已經有這位顧客了，要不要直接帶入他的資料？',
+  CUSTOMER_NOT_FOUND: '找不到這位顧客的資料，可能已經被刪除了',
+  CUSTOMER_LOCKED_CANNOT_DELETE: '這位顧客已經完成簽署，無法刪除，請聯絡管理員處理',
+  STORE_REQUIRED: '請先選擇要建檔的門店',
+  STORE_NAME_REQUIRED: '分店名稱不能空白',
+  STORE_NOT_FOUND: '找不到這間分店，可能已經被刪除了',
+  STORE_HAS_DEPENDENTS: '這間分店底下還有顧客或員工帳號，請先轉移或處理完再刪除',
+  STORE_NOT_IN_REGION: '這間分店不在您負責的區域內，無法在這裡開立帳號',
+  STORE_REGION_UNAUTHORIZED: '經銷商只能建立自己負責區域內的分店',
+
+  INVENTORY_STORE_UNAUTHORIZED: '店長只能調整自己所屬分店的庫存',
+  INVENTORY_PRODUCT_NOT_FOUND: '找不到這個商品，可能已經被下架了',
+  PRODUCT_NAME_REQUIRED: '商品名稱不能空白',
+  PRODUCT_SKU_REQUIRED: '商品編號（SKU）不能空白',
+  PRODUCT_SKU_EXISTS: '這個商品編號（SKU）已經有人用了，請換一個',
+  PRODUCT_NOT_FOUND: '找不到這個商品，可能已經被刪除了',
+  CONTACT_NAME_REQUIRED: '請輸入姓名',
+  CONTACT_CITY_INVALID: '請選擇正確的所在地區',
+  CONTACT_CATEGORY_NOT_FOUND: '找不到這個詢問類別，可能已經被下架了',
+  CONTACT_CATEGORY_NAME_REQUIRED: '類別名稱不能空白',
+  CONTACT_CATEGORY_IN_USE: '這個類別還有訊息使用中，無法刪除，請先把訊息處理完或改類別',
+  CONTACT_MESSAGE_NOT_FOUND: '找不到這筆聯絡訊息，可能已經被處理過了',
+  CONTACT_MESSAGE_NOT_FORWARDABLE: '只有體驗諮詢類別的訊息可以轉給分店',
+  RESTOCK_REQUEST_NOT_FOUND: '找不到這筆補貨請求，可能已經被處理過了',
+  RESTOCK_REQUEST_ALREADY_COMPLETED: '這筆補貨請求已經標記完成過了',
+  INVENTORY_TYPE_INVALID: '庫存異動類型不正確，請重新選擇',
+  INVENTORY_INVALID_QUANTITY: '數量不正確，請輸入正確的數字',
+  INVENTORY_INSUFFICIENT_STOCK: '庫存不足，無法完成這次異動',
+
+  SIGNATURE_CONTENT_MISSING: '聲明書內容好像沒有帶到，請重新整理畫面再試一次',
+  SIGNATURE_IMAGE_MISSING: '沒有偵測到簽名，請在框框裡簽名後再按確認',
+  SIGNATURE_TOO_SMALL: '簽名看起來太小或太短，請重新簽一次完整的簽名',
+  SIGNATURE_NOT_FOUND: '找不到這份簽名紀錄',
+  SIGNATURE_VERIFY_FAILED: '這份簽名資料無法通過驗證，請聯絡系統管理員',
+
+  DISCLAIMER_TEMPLATE_NOT_FOUND: '找不到同意書內容，請聯絡管理員設定條款',
+  DISCLAIMER_NOT_FOUND: '服務人員還沒有簽署同意書',
+  DISCLAIMER_ALREADY_SIGNED: '顧客已經簽過名了，不能重複簽署',
+
+  DOCUMENT_PHOTOS_MISSING: '請至少上傳一張文件照片',
+  DOCUMENT_PHOTO_INVALID: '這個檔案看起來不是正常的照片，請重新拍攝或選擇其他檔案',
+  DOCUMENT_NOT_FOUND: '這位顧客還沒有上傳文件，請先上傳照片',
+  DOCUMENT_LOCKED: '這份文件雙方都已經簽署完成，無法再重新上傳或修改',
+  DOCUMENT_ALREADY_SIGNED: '這個身分已經簽過名了，不能重複簽署',
+
+  CHAT_NOT_PARTICIPANT: '你不是這個對話的成員，無法查看或傳送訊息',
+  CHAT_MESSAGE_NOT_FOUND: '找不到這則訊息，可能已經被刪除了',
+  CHAT_CANNOT_MESSAGE_SELF: '不能跟自己開始對話',
+  CHAT_STORE_REQUIRED: '雙方都沒有所屬分店，無法建立這個對話，請聯絡管理員協助處理',
+  CHAT_CONTACT_PERMISSION_NOT_APPLICABLE: '只有經銷商或店長帳號需要設定可聊天清單',
+  CHAT_CONTACT_INVALID: '選擇的聯絡人裡有不存在或已停用的帳號，請重新選擇',
+
+  CMS_PAGE_NOT_FOUND: '找不到這個頁面，可能還沒發布或已經被刪除',
+  CMS_SLUG_EXISTS: '這個網址路徑已經有頁面在用了，請換一個',
+  CMS_UPLOAD_MISSING: '沒有偵測到上傳的檔案，請重新選擇圖片',
+  CMS_UPLOAD_NOT_FOUND: '找不到這張圖片，可能已經被刪除了',
+  CMS_TEMPLATE_NOT_FOUND: '找不到這個版型，可能已經被刪除了',
+  CMS_ARTICLE_NOT_FOUND: '找不到這篇文章，可能還沒發布或已經被刪除',
+
+  AUTH_INVALID_CREDENTIALS: '帳號或密碼不對，請再輸入一次',
+  AUTH_SESSION_EXPIRED: '登入已逾時，請重新登入一次',
+  AUTH_OLD_PASSWORD_INVALID: '原密碼不正確，請再輸入一次',
+  PERMISSION_DENIED: '這個功能目前的帳號沒有權限使用',
+
+  USER_NAME_REQUIRED: '姓名不能空白',
+  USER_EMAIL_REQUIRED: 'Email 不能空白',
+  USER_EMAIL_EXISTS: '這個 Email 已經有帳號了，請換一個',
+  USER_PASSWORD_TOO_SHORT: '密碼至少要 8 個字元',
+  USER_NOT_FOUND: '找不到這個帳號，可能已經被刪除了',
+  USER_CANNOT_DELETE_SELF: '不能刪除自己的帳號',
+  USER_STORE_REQUIRED: '店長必須指定所屬分店',
+  USER_REGION_REQUIRED: '經銷商必須指定負責區域',
+  USER_ROLE_NOT_ASSIGNABLE: '這個角色不能透過畫面指派',
+
+  DEFAULT: '系統好像出了一點小問題，請稍後再試，或聯絡管理員',
+};
+
+export function translateErrorCode(code: string | undefined | null): string {
+  if (!code) return ERROR_COPY.DEFAULT;
+  return ERROR_COPY[code] ?? ERROR_COPY.DEFAULT;
+}
