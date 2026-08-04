@@ -13,9 +13,9 @@ import { CustomerSearchBar } from '@/components/admin/customers/CustomerSearchBa
 import { CustomerTable } from '@/components/admin/customers/CustomerTable';
 import { NewCustomerWizard } from '@/components/admin/customers/NewCustomerWizard';
 
-/** 對齊後端 customers.controller.ts 的 @Roles('manager') override：只有 admin/system_admin/manager 能建立顧客 */
+/** staff / manager 均可建立顧客（建立時後端強制鎖定為自己所屬分店） */
 function canCreateCustomer(role: AuthUser['role'] | undefined): boolean {
-  return role === 'admin' || role === 'system_admin' || role === 'manager';
+  return role === 'admin' || role === 'system_admin' || role === 'manager' || role === 'staff';
 }
 
 export default function CustomersPage() {

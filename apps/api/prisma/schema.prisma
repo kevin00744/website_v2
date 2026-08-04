@@ -13,6 +13,7 @@ enum Role {
   editor
   dealer
   manager
+  staff
 }
 
 enum Region {
@@ -90,6 +91,12 @@ model User {
   chatContactPermissionsOwned     ChatContactPermission[] @relation("ChatContactPermissionOwner")
   chatContactPermissionsAsContact ChatContactPermission[] @relation("ChatContactPermissionContact")
   chatContactPermissionsCreated   ChatContactPermission[] @relation("ChatContactPermissionCreator")
+  treatmentRecordsPerformed       CustomerTreatmentRecord[] @relation("TreatmentPerformedBy")
+  attendanceLogs                  AttendanceLog[]
+  walletLogsPerformed             WalletLog[]             @relation("WalletLogPerformedBy")
+  financialRecordsPerformed       FinancialRecord[]       @relation("FinancialRecordPerformedBy")
+  serviceRecordsAsStaff           ServiceRecord[]         @relation("ServiceRecordStaff")
+  pettyCashLogsPerformed          PettyCashLog[]          @relation("PettyCashLogPerformedBy")
 
   @@map("users")
 }
@@ -103,19 +110,31 @@ model Store {
   phone          String?
   address        String?
   note           String?
-  isActive       Boolean   @default(true) @map("is_active")
-  createdAt      DateTime  @default(now()) @map("created_at")
-  updatedAt      DateTime  @updatedAt @map("updated_at")
-  deletedAt      DateTime? @map("deleted_at")
+  isActive         Boolean   @default(true) @map("is_active")
+  pettyCashBalance Int       @default(0)    @map("petty_cash_balance")
+  /// 分店功能開關，格式 { "pos": true, "attendance": true, "crm": true, "cms": true }
+  /// 未列出的 key 視同 false；admin/system_admin 不受此開關限制（由前端 hasFeature 處理超集邏輯）
+  features         Json      @default("{}") @map("features")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  deletedAt        DateTime? @map("deleted_at")
 
   users     User[]
   customers Customer[]
 
-  inventory       StoreInventory[]
-  inventoryLogs   InventoryLog[]
-  conversations   Conversation[]
-  restockRequests RestockRequest[]
-  contactMessages ContactMessage[]
+  inventory        StoreInventory[]
+  inventoryLogs    InventoryLog[]
+  conversations    Conversation[]
+  restockRequests  RestockRequest[]
+  contactMessages  ContactMessage[]
+  attendanceLogs   AttendanceLog[]
+  serviceItems     ServiceItem[]
+  promotionPlans   PromotionPlan[]
+  walletLogs       WalletLog[]
+  customerCourses  CustomerCourse[]
+  financialRecords FinancialRecord[]
+  serviceRecords   ServiceRecord[]
+  pettyCashLogs    PettyCashLog[]
 
   @@map("stores")
 }
@@ -128,8 +147,10 @@ model Customer {
   email        String?
   address      String?
   note         String?
-  nationalId   String? @unique @map("national_id")
+  nationalId   String? @map("national_id")
   customerCode String? @unique @map("customer_code")
+  isExosomeUser              Boolean @default(false) @map("is_exosome_user")
+  exosomeConsentSignatureUrl String? @map("exosome_consent_signature_url")
 
   storeId   Int   @map("store_id")
   store     Store @relation(fields: [storeId], references: [id])
@@ -160,10 +181,16 @@ model Customer {
 
   signatures Signature[]
 
-  inventoryLogs InventoryLog[]
+  inventoryLogs    InventoryLog[]
+  treatmentRecords CustomerTreatmentRecord[]
+  wallet           CustomerWallet?
+  walletLogs       WalletLog[]
+  customerCourses  CustomerCourse[]
+  serviceRecords   ServiceRecord[]
 
   @@index([name])
   @@index([phone])
+  @@index([storeId, phone])
   @@map("customers")
 }
 
@@ -230,9 +257,10 @@ model Product {
   updatedAt   DateTime  @updatedAt @map("updated_at")
   deletedAt   DateTime? @map("deleted_at")
 
-  storeInventory  StoreInventory[]
-  inventoryLogs   InventoryLog[]
-  restockRequests RestockRequest[]
+  storeInventory   StoreInventory[]
+  inventoryLogs    InventoryLog[]
+  restockRequests  RestockRequest[]
+  treatmentRecords CustomerTreatmentRecord[]
 
   @@map("products")
 }
@@ -324,6 +352,52 @@ enum InquiryCategoryKind {
   experience
   /// 其他：保留彈性，之後後台新增類別預設用這個，不會自動分派給任何人，只有 admin 看得到
   other
+}
+
+// ─── ERP/POS 擴充 Enums ──────────────────────────────────────────────────────
+
+enum PaymentMethod {
+  cash
+  transfer
+  line_pay
+  credit_card
+}
+
+enum PettyCashActionType {
+  add              // 補充備用金（店長/admin 手動補充）
+  remove           // 移除備用金（店長/admin 手動移除）
+  outsource_deduct // 外包支出扣款（自動由 outsource_payout 觸發）
+  expense_deduct   // 日常支出現金付款扣款（自動由 daily_expense+cash 觸發）
+}
+
+enum FinancialRecordType {
+  income
+  expense
+}
+
+/// 帳務分類：與 FinancialRecord.category 搭配，決定如何聯動 Store.pettyCashBalance
+enum FinancialCategory {
+  sales                 // 單次/課程營業收入
+  top_up                // 儲值收入
+  outsource_payout      // 外包人員現金日結支出（應用層從 pettyCashBalance 扣）
+  daily_expense         // 日常雜支
+  petty_cash_replenish  // 備用金補充（限店長/admin，應用層加到 pettyCashBalance）
+}
+
+enum ConsumptionType {
+  single_purchase   // 單次消費，現場付款
+  wallet_deduction  // 扣儲值金
+  course_deduction  // 扣課程堂數
+}
+
+enum PromotionPlanType {
+  top_up_bonus   // 儲值優惠（儲 X 送 Y）
+  course_bundle  // 課程套組（N 堂）
+}
+
+enum WalletMovementType {
+  top_up     // 儲值（增加餘額）
+  deduction  // 扣款（消費/退費）
 }
 
 /// 「聯絡我們」表單的詢問類別，後台可以新增/編輯/上下架——kind 決定這個類別建立的訊息要怎麼分派
@@ -531,4 +605,229 @@ model Article {
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
   @@map("articles")
+}
+
+/// 顧客商品使用紀錄：記錄每次服務選用了哪個商品，與庫存系統無關（不扣庫存），
+/// 僅做為服務歷程追蹤。照片以 JSON 陣列存相對路徑（同 document/disclaimer PDF 的 storage 慣例）。
+model CustomerTreatmentRecord {
+  id          Int      @id @default(autoincrement())
+  customerId  Int      @map("customer_id")
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  productId   Int     @map("product_id")
+  product     Product @relation(fields: [productId], references: [id])
+
+  performedById Int  @map("performed_by_id")
+  performedBy   User @relation("TreatmentPerformedBy", fields: [performedById], references: [id])
+
+  performedAt DateTime @default(now()) @map("performed_at")
+  note        String?
+
+  /// 照片相對路徑陣列，e.g. ["/api/v2/cms/uploads/abc.jpg"]，前端可直接用 <img src=...>
+  photos      Json     @default("[]")
+
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([customerId])
+  @@map("customer_treatment_records")
+}
+
+// ─── ERP/POS 擴充 Models ─────────────────────────────────────────────────────
+
+/// 員工打卡帳本（Append-only）。clockOutAt 為 null 代表尚未下班（open clock）。
+model AttendanceLog {
+  id         Int       @id @default(autoincrement())
+  userId     Int       @map("user_id")
+  user       User      @relation(fields: [userId], references: [id])
+  storeId    Int       @map("store_id")
+  store      Store     @relation(fields: [storeId], references: [id])
+  clockInAt  DateTime  @map("clock_in_at")
+  clockOutAt DateTime? @map("clock_out_at")
+  note       String?
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([storeId, clockInAt])
+  @@map("attendance_logs")
+}
+
+/// 服務/課程項目目錄。storeId 為 null 代表全域通用項目（admin 建立）；非 null 代表分店自訂項目。
+/// 有軟刪除（下架但不影響歷史紀錄外鍵完整性）。
+model ServiceItem {
+  id            Int       @id @default(autoincrement())
+  storeId       Int?      @map("store_id")
+  store         Store?    @relation(fields: [storeId], references: [id])
+  name          String
+  price         Int
+  isOutsourced  Boolean   @default(false) @map("is_outsourced")
+  outsourceCost Int?      @map("outsource_cost")
+  isActive      Boolean   @default(true) @map("is_active")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  deletedAt     DateTime? @map("deleted_at")
+
+  promotionPlanItems PromotionPlanItem[]
+  customerCourses    CustomerCourse[]
+  serviceRecords     ServiceRecord[]
+
+  @@index([storeId])
+  @@map("service_items")
+}
+
+/// 優惠方案（多品項組合包架構）。
+/// top_up_bonus：儲值優惠（售價 X 元，贈 bonusAmount 儲值金）；
+/// course_bundle：課程套組（售價 X 元，透過 PromotionPlanItem 定義各課程堂數）。
+model PromotionPlan {
+  id          Int               @id @default(autoincrement())
+  storeId     Int               @map("store_id")
+  store       Store             @relation(fields: [storeId], references: [id])
+  name        String
+  type        PromotionPlanType
+  price       Int
+  bonusAmount Int?              @map("bonus_amount")   // top_up_bonus 時有效
+  isActive    Boolean           @default(true)          @map("is_active")
+  createdAt   DateTime          @default(now())         @map("created_at")
+  updatedAt   DateTime          @updatedAt              @map("updated_at")
+  deletedAt   DateTime?         @map("deleted_at")
+
+  items PromotionPlanItem[]
+
+  @@index([storeId])
+  @@map("promotion_plans")
+}
+
+/// 方案明細（一對多）：一個 PromotionPlan 可包含多個課程品項，
+/// 每筆記錄代表「此方案包含 serviceItem X 共 sessions 堂」。
+model PromotionPlanItem {
+  id            Int          @id @default(autoincrement())
+  planId        Int          @map("plan_id")
+  plan          PromotionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  serviceItemId Int          @map("service_item_id")
+  serviceItem   ServiceItem  @relation(fields: [serviceItemId], references: [id])
+  sessions      Int          // 此品項在方案內包含的堂數
+
+  @@index([planId])
+  @@map("promotion_plan_items")
+}
+
+/// 顧客錢包（一對一）。balance 是本金餘額，bonusBalance 是贈送金餘額。
+/// 金額永不為負由應用層保證。餘額變動歷史在 WalletLog。
+model CustomerWallet {
+  id           Int      @id @default(autoincrement())
+  customerId   Int      @unique @map("customer_id")
+  customer     Customer @relation(fields: [customerId], references: [id])
+  balance      Int      @default(0)
+  bonusBalance Int      @default(0) @map("bonus_balance")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("customer_wallets")
+}
+
+/// 儲值金異動帳本（Append-only）。amount 永遠為正整數，type 決定增減方向。
+model WalletLog {
+  id            Int                @id @default(autoincrement())
+  customerId    Int                @map("customer_id")
+  customer      Customer           @relation(fields: [customerId], references: [id])
+  storeId       Int                @map("store_id")
+  store         Store              @relation(fields: [storeId], references: [id])
+  type          WalletMovementType
+  amount        Int
+  bonusAmount   Int                @default(0) @map("bonus_amount")
+  performedById Int                @map("performed_by_id")
+  performedBy   User               @relation("WalletLogPerformedBy", fields: [performedById], references: [id])
+  note          String?
+  createdAt     DateTime           @default(now()) @map("created_at")
+
+  @@index([customerId])
+  @@index([storeId])
+  @@map("wallet_logs")
+}
+
+/// 顧客擁有的課程。顧客購買套組後產生一筆。usedSessions 由應用層在每次 ServiceRecord 後遞增。
+model CustomerCourse {
+  id            Int         @id @default(autoincrement())
+  customerId    Int         @map("customer_id")
+  customer      Customer    @relation(fields: [customerId], references: [id])
+  serviceItemId Int         @map("service_item_id")
+  serviceItem   ServiceItem @relation(fields: [serviceItemId], references: [id])
+  storeId       Int         @map("store_id")
+  store         Store       @relation(fields: [storeId], references: [id])
+  totalSessions Int         @map("total_sessions")
+  usedSessions  Int         @default(0) @map("used_sessions")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  @@index([customerId])
+  @@map("customer_courses")
+}
+
+/// 備用金異動日誌（獨立系統）。
+/// 備用金補充/移除/被扣款的每一筆都記在這裡，與 FinancialRecord 完全分離。
+/// balanceAfter 由應用層在 transaction 內計算並寫入（不依賴 trigger）。
+model PettyCashLog {
+  id            Int                 @id @default(autoincrement())
+  storeId       Int                 @map("store_id")
+  store         Store               @relation(fields: [storeId], references: [id])
+  action        PettyCashActionType
+  amount        Int
+  balanceAfter  Int                 @map("balance_after")
+  note          String?
+  performedById Int                 @map("performed_by_id")
+  performedBy   User                @relation("PettyCashLogPerformedBy", fields: [performedById], references: [id])
+  createdAt     DateTime            @default(now()) @map("created_at")
+
+  @@index([storeId, createdAt])
+  @@map("petty_cash_logs")
+}
+
+/// 分店流水總帳（Append-only，純收支）。
+/// outsource_payout 同時會在 PettyCashLog 寫入 outsource_deduct；
+/// daily_expense 現金付款時同時在 PettyCashLog 寫入 expense_deduct。
+/// petty_cash_replenish 已廢棄，新操作改用 PettyCashLog。
+model FinancialRecord {
+  id            Int                 @id @default(autoincrement())
+  storeId       Int                 @map("store_id")
+  store         Store               @relation(fields: [storeId], references: [id])
+  type          FinancialRecordType
+  category      FinancialCategory
+  amount        Int
+  paymentMethod PaymentMethod       @map("payment_method")
+  performedById Int                 @map("performed_by_id")
+  performedBy   User                @relation("FinancialRecordPerformedBy", fields: [performedById], references: [id])
+  description   String?
+  createdAt     DateTime            @default(now()) @map("created_at")
+
+  @@index([storeId, createdAt])
+  @@map("financial_records")
+}
+
+/// 服務與 POS 結帳紀錄（Append-only）。
+/// consumptionType 為 wallet_deduction 或 course_deduction 時，
+/// customerSignatureUrl 業務上必填（應用層強制）。staffId 用於日後業績抽成計算。
+model ServiceRecord {
+  id                   Int             @id @default(autoincrement())
+  customerId           Int             @map("customer_id")
+  customer             Customer        @relation(fields: [customerId], references: [id])
+  storeId              Int             @map("store_id")
+  store                Store           @relation(fields: [storeId], references: [id])
+  staffId              Int             @map("staff_id")
+  staff                User            @relation("ServiceRecordStaff", fields: [staffId], references: [id])
+  serviceItemId        Int             @map("service_item_id")
+  serviceItem          ServiceItem     @relation(fields: [serviceItemId], references: [id])
+  consumptionType      ConsumptionType @map("consumption_type")
+  amountPaid           Int?            @map("amount_paid")
+  /// 多重支付明細，格式：[{ method: 'cash', amount: 500 }, { method: 'line_pay', amount: 300 }]
+  /// 僅 single_purchase 時使用；wallet/course_deduction 為 null
+  payments             Json?
+  sessionsDeducted     Int?            @map("sessions_deducted")
+  customerSignatureUrl String?         @map("customer_signature_url")
+  signatureAt          DateTime?       @map("signature_at")
+  outsourcePaidAt      DateTime?       @map("outsource_paid_at")  // 外包費用已給付時間，null=待給付
+  note                 String?
+  createdAt            DateTime        @default(now()) @map("created_at")
+
+  @@index([customerId])
+  @@index([storeId, createdAt])
+  @@index([staffId])
+  @@map("service_records")
 }

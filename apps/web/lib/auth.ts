@@ -7,9 +7,12 @@ export interface AuthUser {
   id: number;
   email: string;
   name: string;
-  role: 'system_admin' | 'admin' | 'editor' | 'dealer' | 'manager';
+  role: 'system_admin' | 'admin' | 'editor' | 'dealer' | 'manager' | 'staff';
   storeId: number | null;
   region: 'north' | 'central' | 'south' | null;
+  /** 登入時從後端取得，store 功能開關（例如 { pos: true, attendance: true }）。
+   *  admin/system_admin 不受此限制（由 hasFeature 的超集邏輯處理）。 */
+  storeFeatures: Record<string, boolean> | null;
 }
 
 /**

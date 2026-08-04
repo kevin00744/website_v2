@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /** 跟 index.ts 的 Role/Region 同一個值域，這裡不重新 export，避免跟 index.ts 的型別宣告撞名 */
-type RoleValue = 'system_admin' | 'admin' | 'editor' | 'dealer' | 'manager';
+type RoleValue = 'system_admin' | 'admin' | 'editor' | 'dealer' | 'manager' | 'staff';
 type RegionValue = 'north' | 'central' | 'south';
 
 /** system_admin 故意不在這裡——不能透過畫面指派出第二個系統管理員，後端 UsersService 也會擋（USER_ROLE_NOT_ASSIGNABLE） */
@@ -10,6 +10,7 @@ export const ASSIGNABLE_ROLES: { value: RoleValue; label: string }[] = [
   { value: 'editor', label: '編輯' },
   { value: 'dealer', label: '經銷商' },
   { value: 'manager', label: '店長' },
+  { value: 'staff', label: '服務人員' },
 ];
 
 export const ROLE_LABEL: Record<RoleValue, string> = {
@@ -18,6 +19,7 @@ export const ROLE_LABEL: Record<RoleValue, string> = {
   editor: '編輯',
   dealer: '經銷商',
   manager: '店長',
+  staff: '服務人員',
 };
 
 export const userNameSchema = z.string().trim().min(1, '姓名不能空白').max(50, '姓名好像太長了，請確認一下');
@@ -35,14 +37,14 @@ export const createUserSchema = z
     name: userNameSchema,
     email: userEmailSchema,
     password: userPasswordSchema,
-    role: z.enum(['admin', 'editor', 'dealer', 'manager'], { errorMap: () => ({ message: '請選擇角色' }) }),
+    role: z.enum(['admin', 'editor', 'dealer', 'manager', 'staff'], { errorMap: () => ({ message: '請選擇角色' }) }),
     storeId: z.number().optional(),
     region: z.enum(['north', 'central', 'south']).optional(),
     phone: z.string().trim().optional(),
   })
   .superRefine((value, ctx) => {
-    if (value.role === 'manager' && !value.storeId) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: '店長必須指定所屬分店', path: ['storeId'] });
+    if ((value.role === 'manager' || value.role === 'staff') && !value.storeId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: '店長/服務人員必須指定所屬分店', path: ['storeId'] });
     }
     if (value.role === 'dealer' && !value.region) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: '經銷商必須指定負責區域', path: ['region'] });
@@ -56,15 +58,15 @@ export const updateUserSchema = z
   .object({
     name: userNameSchema,
     email: userEmailSchema,
-    role: z.enum(['admin', 'editor', 'dealer', 'manager'], { errorMap: () => ({ message: '請選擇角色' }) }),
+    role: z.enum(['admin', 'editor', 'dealer', 'manager', 'staff'], { errorMap: () => ({ message: '請選擇角色' }) }),
     storeId: z.number().optional(),
     region: z.enum(['north', 'central', 'south']).optional(),
     phone: z.string().trim().optional(),
     isActive: z.boolean(),
   })
   .superRefine((value, ctx) => {
-    if (value.role === 'manager' && !value.storeId) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: '店長必須指定所屬分店', path: ['storeId'] });
+    if ((value.role === 'manager' || value.role === 'staff') && !value.storeId) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: '店長/服務人員必須指定所屬分店', path: ['storeId'] });
     }
     if (value.role === 'dealer' && !value.region) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: '經銷商必須指定負責區域', path: ['region'] });

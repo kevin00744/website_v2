@@ -7,8 +7,22 @@ import type {
   DisclaimerTemplate,
   DocumentSignerRole,
   DocumentStatus,
+  TreatmentRecord,
 } from '@website-v2/shared-types';
 import { apiRequest } from './api-client';
+
+export function createQuickCustomer(input: {
+  name: string;
+  phone: string;
+  nationalId?: string;
+  address?: string;
+  line?: string;
+  email?: string;
+  note?: string;
+  storeId?: number;
+}): Promise<CustomerDetail> {
+  return apiRequest<CustomerDetail>('/customers/quick', { method: 'POST', json: input });
+}
 
 export function searchCustomers(query: string): Promise<CustomerListItem[]> {
   const params = new URLSearchParams();
@@ -29,6 +43,11 @@ export function createCustomerWithSignature(input: CustomerWithSignatureInput): 
 }
 
 /** name/nationalId 終身鎖定，CustomerUpdateInput 型別本身就不包含這兩個欄位 */
+/** 補填身分證字號（僅允許從 null 設定，不允許修改已有值） */
+export function fillNationalId(id: number, nationalId: string): Promise<CustomerDetail> {
+  return apiRequest<CustomerDetail>(`/customers/${id}`, { method: 'PATCH', json: { nationalId } });
+}
+
 export function updateCustomer(id: number, input: CustomerUpdateInput): Promise<CustomerDetail> {
   return apiRequest<CustomerDetail>(`/customers/${id}`, { method: 'PATCH', json: input });
 }
@@ -68,7 +87,15 @@ export function getDocumentPdfPath(customerId: number): string {
   return `/customers/${customerId}/document`;
 }
 
-/** 顧客補簽免責聲明書（服務人員那次簽名在建檔當下已經完成，見 NewCustomerWizard/StaffSignatureStep） */
+/** 服務人員事後補簽免責聲明書（非外泌體顧客改為使用外泌體時） */
+export function signStaffDisclaimer(
+  customerId: number,
+  input: { signatureImageUrl: string; signaturePoints?: { x: number; y: number }[] },
+): Promise<DisclaimerStatus> {
+  return apiRequest<DisclaimerStatus>(`/customers/${customerId}/disclaimer/sign-staff`, { method: 'POST', json: input });
+}
+
+/** 顧客補簽免責聲明書 */
 export function signDisclaimer(
   customerId: number,
   input: { signatureImageUrl: string; signaturePoints?: { x: number; y: number }[] },
@@ -79,4 +106,67 @@ export function signDisclaimer(
 /** 相對路徑，給 apiRequestBlob/openPdfInNewTab 用（會自動帶 Authorization header，不能用裸 URL 直接開新分頁） */
 export function getDisclaimerPdfPath(customerId: number): string {
   return `/customers/${customerId}/disclaimer`;
+}
+
+// ─── 顧客持有課程（POS 扣堂選擇器用）───────────────────────────────────────
+
+export interface CustomerCourseItem {
+  id: number;
+  serviceItem: { id: number; name: string; price: number };
+  totalSessions: number;
+  usedSessions: number;
+  remainingSessions: number;
+  createdAt: string;
+}
+
+export function listCustomerCourses(customerId: number): Promise<CustomerCourseItem[]> {
+  return apiRequest<CustomerCourseItem[]>(`/customers/${customerId}/courses`);
+}
+
+export interface CustomerWalletInfo {
+  balance: number;
+  bonusBalance: number;
+  total: number;
+}
+
+export function getCustomerWallet(customerId: number): Promise<CustomerWalletInfo> {
+  return apiRequest<CustomerWalletInfo>(`/customers/${customerId}/wallet`);
+}
+
+export function topUpCustomerWallet(
+  customerId: number,
+  amount: number,
+  paymentMethod: string,
+  note?: string,
+): Promise<{ balance: number; bonusBalance: number }> {
+  return apiRequest(`/customers/${customerId}/wallet/top-up`, {
+    method: 'POST',
+    json: { amount, paymentMethod, note },
+  });
+}
+
+// ─── 療程紀錄 ───────────────────────────────────────────────────────────────
+
+export function listTreatmentRecords(customerId: number): Promise<TreatmentRecord[]> {
+  return apiRequest<TreatmentRecord[]>(`/customers/${customerId}/treatments`);
+}
+
+export function createTreatmentRecord(
+  customerId: number,
+  input: { productId: number; note?: string; performedAt?: string },
+): Promise<TreatmentRecord> {
+  return apiRequest<TreatmentRecord>(`/customers/${customerId}/treatments`, { method: 'POST', json: input });
+}
+
+export function uploadTreatmentPhotos(customerId: number, recordId: number, files: File[]): Promise<TreatmentRecord> {
+  const form = new FormData();
+  files.forEach((f) => form.append('photos', f));
+  return apiRequest<TreatmentRecord>(`/customers/${customerId}/treatments/${recordId}/photos`, {
+    method: 'POST',
+    formData: form,
+  });
+}
+
+export function deleteTreatmentRecord(customerId: number, recordId: number): Promise<void> {
+  return apiRequest<void>(`/customers/${customerId}/treatments/${recordId}`, { method: 'DELETE' });
 }

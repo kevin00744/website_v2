@@ -6,15 +6,18 @@ import { useForm } from 'react-hook-form';
 import {
   customerBasicInfoRequireStoreSchema,
   customerBasicInfoWithOptionalStoreSchema,
+  customerBasicInfoNonExosomeWithOptionalStoreSchema,
+  customerBasicInfoNonExosomeRequireStoreSchema,
   customerDuplicateSearchSchema,
   type CustomerBasicInfoWithOptionalStoreInput,
+  type CustomerBasicInfoNonExosomeInput,
   type CustomerDetail,
   type CustomerListItem,
   type StoreSummary,
 } from '@website-v2/shared-types';
 import { ApiError } from '@/lib/api-client';
 import { getAuthUser, type AuthUser } from '@/lib/auth';
-import { createCustomerWithSignature, searchCustomers, signDisclaimer } from '@/lib/customers-api';
+import { createCustomerWithSignature, createQuickCustomer, searchCustomers, signDisclaimer } from '@/lib/customers-api';
 import { listStores } from '@/lib/stores-api';
 import { useDebouncedValue } from '@/lib/use-debounce';
 import { KioskButton } from '../kiosk/KioskButton';
@@ -75,7 +78,8 @@ export function NewCustomerWizard({ onCreated, onClose }: NewCustomerWizardProps
   const [stores, setStores] = useState<StoreSummary[]>([]);
   const [storesError, setStoresError] = useState<string>();
 
-  const [basicInfo, setBasicInfo] = useState<CustomerBasicInfoWithOptionalStoreInput>();
+  const [basicInfo, setBasicInfo] = useState<CustomerBasicInfoWithOptionalStoreInput | CustomerBasicInfoNonExosomeInput>();
+  const [isExosomeUser, setIsExosomeUser] = useState(false);
   const [staffSignature, setStaffSignature] = useState<SignaturePayload>();
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string>();
@@ -103,10 +107,12 @@ export function NewCustomerWizard({ onCreated, onClose }: NewCustomerWizardProps
     };
   }, [requireStoreSelect]);
 
-  const basicInfoSchema = useMemo(
-    () => (requireStoreSelect ? customerBasicInfoRequireStoreSchema : customerBasicInfoWithOptionalStoreSchema),
-    [requireStoreSelect],
-  );
+  const basicInfoSchema = useMemo(() => {
+    if (isExosomeUser) {
+      return requireStoreSelect ? customerBasicInfoRequireStoreSchema : customerBasicInfoWithOptionalStoreSchema;
+    }
+    return requireStoreSelect ? customerBasicInfoNonExosomeRequireStoreSchema : customerBasicInfoNonExosomeWithOptionalStoreSchema;
+  }, [isExosomeUser, requireStoreSelect]);
 
   const {
     register,
@@ -114,7 +120,8 @@ export function NewCustomerWizard({ onCreated, onClose }: NewCustomerWizardProps
     handleSubmit,
     reset,
     formState: { errors, dirtyFields },
-  } = useForm<CustomerBasicInfoWithOptionalStoreInput>({
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } = useForm<any>({
     resolver: zodResolver(basicInfoSchema),
     mode: 'onChange',
     defaultValues: {
@@ -176,9 +183,24 @@ export function NewCustomerWizard({ onCreated, onClose }: NewCustomerWizardProps
     setStep('basic-info');
   }
 
-  function onSubmitBasicInfo(values: CustomerBasicInfoWithOptionalStoreInput) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function onSubmitBasicInfo(values: any) {
     setBasicInfo(values);
-    setStep('staff-signature');
+    if (isExosomeUser) {
+      // 外泌體路徑：繼續簽署流程
+      setStep('staff-signature');
+    } else {
+      // 非外泌體路徑：直接建立（無需簽名）
+      setSubmitting(true);
+      setSubmitError(undefined);
+      try {
+        const created = await createQuickCustomer(values);
+        onCreated(created);
+      } catch (error) {
+        setSubmitError(error instanceof ApiError ? error.message : '建立顧客失敗，請稍後再試');
+        setSubmitting(false);
+      }
+    }
   }
 
   function handleStaffSignatureConfirm(signature: SignaturePayload) {
@@ -192,7 +214,12 @@ export function NewCustomerWizard({ onCreated, onClose }: NewCustomerWizardProps
     setSubmitting(true);
     setSubmitError(undefined);
     try {
-      const created = await createCustomerWithSignature({ ...basicInfo, signature: staffSignature });
+      const created = await createCustomerWithSignature({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        ...(basicInfo as any),
+        isExosomeUser,
+        signature: staffSignature,
+      });
       await signDisclaimer(created.id, customerSignature);
       onCreated(created);
     } catch (error) {
@@ -205,19 +232,17 @@ export function NewCustomerWizard({ onCreated, onClose }: NewCustomerWizardProps
   return (
     <div className="flex h-full flex-col gap-6">
       <div className="flex flex-wrap items-center gap-2 text-kiosk-base text-slate-500">
-        <StepBadge active={step === 'duplicate-check'} label="① 確認是不是舊顧客" />
-        <span className="text-slate-300" aria-hidden="true">
-          →
-        </span>
-        <StepBadge active={step === 'basic-info'} label="② 填寫基本資料" />
-        <span className="text-slate-300" aria-hidden="true">
-          →
-        </span>
-        <StepBadge active={step === 'staff-signature'} label="③ 服務人員簽名" />
-        <span className="text-slate-300" aria-hidden="true">
-          →
-        </span>
-        <StepBadge active={step === 'customer-signature'} label="④ 顧客簽署同意書" />
+        <StepBadge active={step === 'duplicate-check'} label="① 確認舊顧客" />
+        <span className="text-slate-300">→</span>
+        <StepBadge active={step === 'basic-info'} label="② 填寫資料" />
+        {isExosomeUser && (
+          <>
+            <span className="text-slate-300">→</span>
+            <StepBadge active={step === 'staff-signature'} label="③ 服務人員簽名" />
+            <span className="text-slate-300">→</span>
+            <StepBadge active={step === 'customer-signature'} label="④ 顧客簽署同意書" />
+          </>
+        )}
       </div>
 
       {step === 'duplicate-check' && (
@@ -273,7 +298,7 @@ export function NewCustomerWizard({ onCreated, onClose }: NewCustomerWizardProps
               required
               options={stores.map((store) => ({ value: String(store.id), label: `${store.code} ${store.name}` }))}
               placeholder="請選擇要把這位顧客建到哪一家門市"
-              errorMessage={errors.storeId?.message ?? storesError}
+              errorMessage={(errors.storeId?.message as string | undefined) ?? storesError}
               isValid={Boolean(dirtyFields.storeId) && !errors.storeId}
               {...register('storeId', { valueAsNumber: true })}
             />
@@ -282,51 +307,79 @@ export function NewCustomerWizard({ onCreated, onClose }: NewCustomerWizardProps
             label="姓名"
             required
             placeholder="請輸入顧客姓名"
-            errorMessage={errors.name?.message}
+            errorMessage={errors.name?.message as string | undefined}
             isValid={Boolean(dirtyFields.name) && !errors.name}
             {...register('name')}
           />
           <KioskInput
-            label="身分證字號"
-            required
+            label={isExosomeUser ? '身分證字號 *（使用外泌體必填）' : '身分證字號（選填）'}
+            required={isExosomeUser}
             placeholder="例如 A123456789"
-            errorMessage={errors.nationalId?.message}
+            errorMessage={errors.nationalId?.message as string | undefined}
             isValid={Boolean(dirtyFields.nationalId) && !errors.nationalId}
             {...register('nationalId')}
           />
-          <MaskedPhoneInput name="phone" control={control} label="電話" errorMessage={errors.phone?.message} />
+          <MaskedPhoneInput
+            name="phone"
+            control={control}
+            label={isExosomeUser ? '電話（選填）' : '電話 *（必填）'}
+            errorMessage={errors.phone?.message as string | undefined}
+          />
           <KioskInput
             label="住址"
             placeholder="請輸入住址（選填）"
-            errorMessage={errors.address?.message}
+            errorMessage={errors.address?.message as string | undefined}
             isValid={Boolean(dirtyFields.address) && !errors.address}
             {...register('address')}
           />
           <KioskInput
             label="LINE ID"
             placeholder="請輸入 LINE ID（選填）"
-            errorMessage={errors.line?.message}
+            errorMessage={errors.line?.message as string | undefined}
             isValid={Boolean(dirtyFields.line) && !errors.line}
             {...register('line')}
           />
           <KioskInput
             label="Email"
             placeholder="請輸入 Email（選填）"
-            errorMessage={errors.email?.message}
+            errorMessage={errors.email?.message as string | undefined}
             isValid={Boolean(dirtyFields.email) && !errors.email}
             {...register('email')}
           />
           <KioskInput
             label="備註"
             placeholder="請輸入備註（選填）"
-            errorMessage={errors.note?.message}
+            errorMessage={errors.note?.message as string | undefined}
             isValid={Boolean(dirtyFields.note) && !errors.note}
             {...register('note')}
           />
 
+          {/* 外泌體使用者勾選 */}
+          <div className="flex items-start gap-3 rounded-kiosk border border-amber-200 bg-amber-50 p-4">
+            <input
+              type="checkbox"
+              id="is-exosome-user"
+              checked={isExosomeUser}
+              onChange={(e) => setIsExosomeUser(e.target.checked)}
+              className="mt-0.5 h-5 w-5 cursor-pointer accent-kiosk-primary"
+            />
+            <label htmlFor="is-exosome-user" className="cursor-pointer text-kiosk-base text-amber-800">
+              <span className="font-bold">此顧客使用外泌體療程</span>
+              <p className="mt-0.5 text-sm">勾選後系統將在 POS 結帳時提醒確認外泌體同意書簽署。</p>
+            </label>
+          </div>
+
+          {submitError && (
+            <p className="text-kiosk-base font-semibold text-kiosk-danger" role="alert">⚠️ {submitError}</p>
+          )}
+
           <div className="mt-auto flex flex-col gap-3 pt-2">
-            <KioskButton type="submit" variant="primary" fullWidth>
-              下一步，前往簽署
+            <KioskButton type="submit" variant="primary" fullWidth disabled={submitting}>
+              {submitting
+                ? '建立中…'
+                : isExosomeUser
+                  ? '下一步，前往簽署'
+                  : '建立顧客'}
             </KioskButton>
             <KioskButton type="button" variant="ghost" fullWidth onClick={() => setStep('duplicate-check')}>
               上一步

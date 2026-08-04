@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { AppError } from '../common/errors/app-error';
 import type { Region } from '@prisma/client';
 import { StoresService } from './stores.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -48,6 +49,16 @@ export class StoresController {
     return this.storesService.createStore(actor, dto);
   }
 
+  /** 更新商店基本資訊（名稱、電話、地址、備註），限 admin/system_admin */
+  @Patch(':id')
+  @Roles('admin')
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { name?: string; phone?: string; address?: string; note?: string },
+  ) {
+    return this.storesService.updateStore(id, dto);
+  }
+
   /** 啟用/停用快速切換，跟刪除是兩件事 */
   @Patch(':id/status')
   @Roles('system_admin')
@@ -55,10 +66,68 @@ export class StoresController {
     return this.storesService.setActive(id, dto.isActive);
   }
 
-  /** 軟刪除分店，只開放給 admin/system_admin（不開放給 dealer，即使 dealer 能建店） */
+  /** 軟刪除分店，admin/system_admin 均可 */
   @Delete(':id')
-  @Roles('system_admin')
+  @Roles('admin')
   delete(@Param('id', ParseIntPipe) id: number) {
     return this.storesService.deleteStore(id);
+  }
+
+  /** POS 結帳「選擇服務人員」清單，回傳分店啟用中員工（含 staff / manager） */
+  @Get(':id/staff')
+  @Roles('staff', 'manager', 'dealer')
+  listStaff(@Param('id', ParseIntPipe) id: number) {
+    return this.storesService.listStoreStaff(id);
+  }
+
+  /**
+   * 建立分店員工帳號（role 強制鎖定為 staff）。
+   * manager 限操作自己所屬的分店；admin/system_admin 無限制。
+   */
+  @Post(':id/staff')
+  @Roles('manager')
+  createStaff(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { name: string; email: string; password: string },
+  ) {
+    return this.storesService.createStoreStaff(actor, id, dto);
+  }
+
+  /** 更新分店員工資訊（名稱/Email/啟用狀態），manager 限自己分店的 staff */
+  @Patch(':id/staff/:staffId')
+  @Roles('manager')
+  updateStaff(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('staffId', ParseIntPipe) staffId: number,
+    @Body() dto: { name?: string; email?: string; isActive?: boolean },
+  ) {
+    return this.storesService.updateStoreStaff(actor, id, staffId, dto);
+  }
+
+  /** 刪除分店員工，manager 限自己分店的 staff */
+  @Delete(':id/staff/:staffId')
+  @Roles('manager')
+  deleteStaff(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('staffId', ParseIntPipe) staffId: number,
+  ) {
+    return this.storesService.deleteStoreStaff(actor, id, staffId);
+  }
+
+  /** 更新分店功能開關。manager 限操作自己的分店；admin/system_admin 任意分店 */
+  @Patch(':id/features')
+  @Roles('manager')
+  async updateFeatures(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { features: Record<string, boolean> },
+  ) {
+    if (actor.role === 'manager' && actor.storeId !== id) {
+      throw new AppError('PERMISSION_DENIED', '只能管理自己所屬的分店', 403);
+    }
+    return this.storesService.updateStoreFeatures(id, dto.features);
   }
 }

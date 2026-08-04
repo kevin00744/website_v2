@@ -71,6 +71,36 @@ export const customerBasicInfoWithOptionalStoreSchema = customerBasicInfoSchema.
 
 export type CustomerBasicInfoWithOptionalStoreInput = z.infer<typeof customerBasicInfoWithOptionalStoreSchema>;
 
+/**
+ * 非外泌體顧客建立 schema：姓名 + 電話必填，身分證字號選填。
+ * 不走免責聲明簽署流程——若日後勾選外泌體，可在顧客詳情頁補填。
+ */
+const requiredPhoneSchema = z
+  .string()
+  .trim()
+  .min(1, '電話為必填欄位')
+  .refine((v) => /^09\d{2}-\d{3}-\d{3}$/.test(v), { message: '電話號碼格式不對，要09開頭，例如 0912-345-678' });
+
+export const customerBasicInfoNonExosomeSchema = z.object({
+  name: customerNameSchema,
+  nationalId: z.string().trim().optional().or(z.literal('')),
+  phone: requiredPhoneSchema,
+  address: optionalAddressSchema,
+  line: optionalLineSchema,
+  email: optionalEmailSchema,
+  note: optionalNoteSchema,
+});
+
+export const customerBasicInfoNonExosomeWithOptionalStoreSchema = customerBasicInfoNonExosomeSchema.extend({
+  storeId: z.number({ invalid_type_error: '請選擇分店' }).optional(),
+});
+
+export const customerBasicInfoNonExosomeRequireStoreSchema = customerBasicInfoNonExosomeWithOptionalStoreSchema.extend({
+  storeId: z.number({ invalid_type_error: '請選擇分店' }),
+});
+
+export type CustomerBasicInfoNonExosomeInput = z.infer<typeof customerBasicInfoNonExosomeWithOptionalStoreSchema>;
+
 /** admin/system_admin 登入時，「分店選擇」變成必填——見上方 customerBasicInfoWithOptionalStoreSchema 的說明 */
 export const customerBasicInfoRequireStoreSchema = customerBasicInfoWithOptionalStoreSchema.extend({
   storeId: z.number({ invalid_type_error: '請選擇分店' }),
@@ -80,7 +110,9 @@ export const customerBasicInfoRequireStoreSchema = customerBasicInfoWithOptional
  * 編輯顧客用的 schema：故意用 .omit 把 name/nationalId 拿掉，
  * 這兩個欄位終身鎖定不可修改，編輯表單從型別上就不該出現可編輯的 input 綁定到它們。
  */
-export const customerUpdateSchema = customerBasicInfoSchema.omit({ name: true, nationalId: true });
+export const customerUpdateSchema = customerBasicInfoSchema
+  .omit({ name: true, nationalId: true })
+  .extend({ isExosomeUser: z.boolean().optional() });
 
 export const signaturePointSchema = z.object({ x: z.number(), y: z.number() });
 
@@ -97,6 +129,7 @@ export const customerSignaturePayloadSchema = z.object({
 /** POST /customers/with-signature 的請求 body（顧客資料 + 簽名打包成同一個 payload） */
 export const customerWithSignatureSchema = customerBasicInfoWithOptionalStoreSchema.extend({
   signature: customerSignaturePayloadSchema,
+  isExosomeUser: z.boolean().optional(),
 });
 
 export type CustomerDuplicateSearchInput = z.infer<typeof customerDuplicateSearchSchema>;
@@ -141,6 +174,8 @@ export interface CustomerDetail {
   documentStaffSignedAt: string | null;
   documentFullySigned: boolean;
   canDelete: boolean;
+  isExosomeUser: boolean;
+  exosomeConsentSignatureUrl: string | null;
 }
 
 /** 切換 requiresSignature 就是「設定簽名位置」的唯一機制，座標由後端排版引擎自動算出 */
@@ -170,4 +205,22 @@ export interface DisclaimerStatus {
   disclaimerCustomerSignedAt: string | null;
   disclaimerStaffSignedAt: string | null;
   disclaimerFullySigned: boolean;
+}
+
+export interface TreatmentProductSummary {
+  id: number;
+  sku: string;
+  name: string;
+  unit: string | null;
+}
+
+export interface TreatmentRecord {
+  id: number;
+  customerId: number;
+  product: TreatmentProductSummary;
+  performedBy: { id: number; name: string };
+  performedAt: string;
+  note: string | null;
+  photos: string[];
+  createdAt: string;
 }

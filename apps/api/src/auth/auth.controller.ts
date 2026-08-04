@@ -19,11 +19,12 @@ export class AuthController {
     return this.authService.login(dto.email, dto.password);
   }
 
-  /** 給前端在 token 還沒過期前快速確認「我現在是誰」，不用每次都重新解析 JWT payload */
+  /** 給前端在 token 還沒過期前快速確認「我現在是誰」；storeFeatures 即時從 DB 查（不存在 JWT 裡） */
   @Post('me')
   @UseGuards(JwtAuthGuard)
-  me(@CurrentUser() user: AuthenticatedUser) {
-    return user;
+  async me(@CurrentUser() user: AuthenticatedUser) {
+    const storeFeatures = await this.authService.getStoreFeatures(user.storeId);
+    return { ...user, storeFeatures };
   }
 
   /** 任何登入帳號都能改自己的密碼，一定要驗證舊密碼；管理員幫別人重設密碼走 PATCH /users/:id/password */

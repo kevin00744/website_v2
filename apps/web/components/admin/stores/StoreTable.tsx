@@ -5,10 +5,10 @@ interface StoreTableProps {
   stores: StoreSummary[];
   onToggleStatus: (store: StoreSummary) => void;
   togglingId?: number;
-  /** 啟用/停用目前後端只開放 admin/system_admin，dealer 看得到分店但不顯示這顆按鈕，避免點下去得到一個 403 */
   canToggleStatus: boolean;
   onDelete?: (store: StoreSummary) => void;
   deletingId?: number;
+  onEdit?: (store: StoreSummary) => void;
 }
 
 const REGION_LABEL: Record<StoreSummary['region'], string> = {
@@ -17,8 +17,7 @@ const REGION_LABEL: Record<StoreSummary['region'], string> = {
   south: '南部',
 };
 
-/** iPad/桌機版（≥768px）：大氣留白的資料表格，手機版隱藏改用 StoreCardList */
-export function StoreTable({ stores, onToggleStatus, togglingId, canToggleStatus, onDelete, deletingId }: StoreTableProps) {
+export function StoreTable({ stores, onToggleStatus, togglingId, canToggleStatus, onDelete, deletingId, onEdit }: StoreTableProps) {
   return (
     <table className="hidden w-full border-separate border-spacing-y-3 md:table">
       <thead>
@@ -51,6 +50,11 @@ export function StoreTable({ stores, onToggleStatus, togglingId, canToggleStatus
             </td>
             <td className="rounded-r-kiosk px-4 py-5">
               <div className="flex gap-2">
+                {onEdit && (
+                  <KioskButton variant="secondary" onClick={() => onEdit(store)}>
+                    編輯
+                  </KioskButton>
+                )}
                 {canToggleStatus && (
                   <KioskButton
                     variant={store.isActive ? 'ghost' : 'secondary'}

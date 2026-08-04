@@ -33,6 +33,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     if (!user) {
       throw new AppError('AUTH_SESSION_EXPIRED', 'user not found or deactivated', 401);
     }
-    return user;
+    // storeFeatures 不存進 JWT（features 可被店長即時更新），req.user 上設為 null。
+    // 需要即時 features 時由 /auth/me 端點從 DB 查詢。
+    return { ...user, storeFeatures: null };
   }
 }

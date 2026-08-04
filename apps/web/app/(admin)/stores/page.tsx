@@ -9,6 +9,7 @@ import { KioskButton } from '@/components/admin/kiosk/KioskButton';
 import { StoreCardList } from '@/components/admin/stores/StoreCardList';
 import { StoreTable } from '@/components/admin/stores/StoreTable';
 import { NewStoreModal } from '@/components/admin/stores/NewStoreModal';
+import { EditStoreModal } from '@/components/admin/stores/EditStoreModal';
 
 /** 對齊 StoresController 的 @Roles('dealer','manager')：admin/system_admin/dealer 都能進這個頁面 */
 function canManageStores(role: AuthUser['role'] | undefined): boolean {
@@ -36,6 +37,7 @@ export default function StoresPage() {
   const [togglingId, setTogglingId] = useState<number>();
   const [deletingId, setDeletingId] = useState<number>();
   const [modalOpen, setModalOpen] = useState(false);
+  const [editingStore, setEditingStore] = useState<StoreSummary | null>(null);
 
   useEffect(() => {
     setUser(getAuthUser());
@@ -136,6 +138,7 @@ export default function StoresPage() {
         canToggleStatus={canToggleStatus}
         onDelete={canToggleStatus ? handleDelete : undefined}
         deletingId={deletingId}
+        onEdit={canToggleStatus ? (s) => setEditingStore(s) : undefined}
       />
       <StoreCardList
         stores={stores}
@@ -144,6 +147,7 @@ export default function StoresPage() {
         canToggleStatus={canToggleStatus}
         onDelete={canToggleStatus ? handleDelete : undefined}
         deletingId={deletingId}
+        onEdit={canToggleStatus ? (s) => setEditingStore(s) : undefined}
       />
 
       {/* 手機版：重點按鈕固定置底，永遠在大拇指範圍內 */}
@@ -158,6 +162,15 @@ export default function StoresPage() {
         onClose={() => setModalOpen(false)}
         onCreated={handleCreated}
         lockedRegion={dealerLockedRegion}
+      />
+      <EditStoreModal
+        open={Boolean(editingStore)}
+        store={editingStore}
+        onClose={() => setEditingStore(null)}
+        onUpdated={(updated) => {
+          setStores((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+          setEditingStore(null);
+        }}
       />
     </div>
   );

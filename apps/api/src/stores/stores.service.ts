@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import * as bcrypt from 'bcryptjs';
 import type { Region, Store } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppError } from '../common/errors/app-error';
@@ -110,6 +111,25 @@ export class StoresService {
   }
 
   /** 啟用/停用快速切換，跟刪除是兩件事——停用只是讓它之後不能再被選來建顧客，資料還在 */
+  /** 更新商店基本資訊（名稱、電話、地址、備註），限 admin/system_admin */
+  async updateStore(
+    id: number,
+    input: { name?: string; phone?: string; address?: string; note?: string },
+  ): Promise<StoreSummary> {
+    const existing = await this.prisma.store.findFirst({ where: { id, deletedAt: null } });
+    if (!existing) throw new AppError('STORE_NOT_FOUND', '找不到此分店', 404);
+    const updated = await this.prisma.store.update({
+      where: { id },
+      data: {
+        ...(input.name?.trim() ? { name: input.name.trim() } : {}),
+        ...(input.phone !== undefined ? { phone: input.phone || null } : {}),
+        ...(input.address !== undefined ? { address: input.address || null } : {}),
+        ...(input.note !== undefined ? { note: input.note || null } : {}),
+      },
+    });
+    return toSummary(updated);
+  }
+
   async setActive(id: number, isActive: boolean): Promise<StoreSummary> {
     const existing = await this.prisma.store.findFirst({ where: { id, deletedAt: null } });
     if (!existing) {
@@ -144,6 +164,107 @@ export class StoresService {
     }
 
     await this.prisma.store.update({ where: { id }, data: { deletedAt: new Date(), isActive: false } });
+  }
+
+  /** 更新分店功能開關，限 manager 操作自己的分店（admin/system_admin 無限制） */
+  async updateStoreFeatures(id: number, features: Record<string, boolean>) {
+    const store = await this.prisma.store.findFirst({ where: { id, deletedAt: null } });
+    if (!store) throw new AppError('STORE_NOT_FOUND', '找不到此分店', 404);
+    await this.prisma.store.update({ where: { id }, data: { features } });
+  }
+
+  /**
+   * 建立分店員工帳號。
+   * - manager 操作：強制 storeId = actor.storeId，role 強制鎖定為 'staff'（禁止越權）
+   * - admin/system_admin 操作：允許任意分店，但 role 仍鎖定為 'staff'（此端點只開放建立員工）
+   */
+  async createStoreStaff(
+    actor: AuthenticatedUser,
+    storeId: number,
+    input: { name: string; email: string; password: string },
+  ) {
+    if (!isAdminRole(actor.role) && actor.role !== 'manager') {
+      throw new AppError('PERMISSION_DENIED', '只有店長或管理員可以建立員工帳號', 403);
+    }
+    if (actor.role === 'manager' && actor.storeId !== storeId) {
+      throw new AppError('STAFF_STORE_MISMATCH', '只能為自己所屬分店建立員工帳號', 403);
+    }
+
+    const store = await this.prisma.store.findFirst({ where: { id: storeId, deletedAt: null } });
+    if (!store) throw new AppError('STORE_NOT_FOUND', '找不到此分店', 404);
+
+    const existing = await this.prisma.user.findFirst({ where: { email: input.email.trim(), deletedAt: null } });
+    if (existing) throw new AppError('USER_EMAIL_EXISTS', '這個 Email 已被其他帳號使用', 409);
+
+    if (!input.password || input.password.length < 8) {
+      throw new AppError('USER_PASSWORD_TOO_SHORT', '密碼至少要 8 個字元', 400);
+    }
+
+    const passwordHash = await bcrypt.hash(input.password, 10);
+    const user = await this.prisma.user.create({
+      data: {
+        name: input.name.trim(),
+        email: input.email.trim().toLowerCase(),
+        password: passwordHash,
+        role: 'staff',        // 強制鎖定為 staff，任何呼叫端都無法繞過
+        storeId,
+      },
+      select: { id: true, name: true, email: true, role: true, storeId: true, isActive: true },
+    });
+    return user;
+  }
+
+  /** manager 更新自己分店的 staff 資訊（姓名、Email、isActive） */
+  async updateStoreStaff(
+    actor: AuthenticatedUser,
+    storeId: number,
+    staffId: number,
+    input: { name?: string; email?: string; isActive?: boolean },
+  ) {
+    if (!isAdminRole(actor.role) && actor.storeId !== storeId) {
+      throw new AppError('PERMISSION_DENIED', '只能管理自己所屬分店的員工', 403);
+    }
+    const staff = await this.prisma.user.findFirst({
+      where: { id: staffId, storeId, role: 'staff', deletedAt: null },
+    });
+    if (!staff) throw new AppError('USER_NOT_FOUND', '找不到此員工', 404);
+    if (input.email && input.email !== staff.email) {
+      const existing = await this.prisma.user.findFirst({ where: { email: input.email, deletedAt: null } });
+      if (existing) throw new AppError('USER_EMAIL_EXISTS', '這個 Email 已被其他帳號使用', 409);
+    }
+    return this.prisma.user.update({
+      where: { id: staffId },
+      data: {
+        ...(input.name?.trim() ? { name: input.name.trim() } : {}),
+        ...(input.email?.trim() ? { email: input.email.trim().toLowerCase() } : {}),
+        ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
+      },
+      select: { id: true, name: true, email: true, role: true, storeId: true, isActive: true },
+    });
+  }
+
+  /** manager 軟刪除自己分店的 staff */
+  async deleteStoreStaff(actor: AuthenticatedUser, storeId: number, staffId: number) {
+    if (!isAdminRole(actor.role) && actor.storeId !== storeId) {
+      throw new AppError('PERMISSION_DENIED', '只能管理自己所屬分店的員工', 403);
+    }
+    const staff = await this.prisma.user.findFirst({
+      where: { id: staffId, storeId, role: 'staff', deletedAt: null },
+    });
+    if (!staff) throw new AppError('USER_NOT_FOUND', '找不到此員工', 404);
+    await this.prisma.user.update({
+      where: { id: staffId },
+      data: { deletedAt: new Date(), isActive: false },
+    });
+  }
+
+  /** POS 結帳「選擇服務人員」用：回傳該分店所有啟用中的員工帳號 */
+  async listStoreStaff(storeId: number) {
+    return this.prisma.user.findMany({
+      where: { storeId, isActive: true, deletedAt: null },
+      select: { id: true, name: true, role: true },
+      orderBy: { name: 'asc' },
+    });
   }
 }
 

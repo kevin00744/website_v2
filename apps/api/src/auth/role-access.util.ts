@@ -19,6 +19,8 @@ export function canActorAccessCustomer(
   if (isAdminRole(actor.role)) return true;
   if (actor.role === 'dealer') return customer.storeRegion === actor.region;
   if (actor.role === 'manager') return actor.storeId !== null && customer.storeId === actor.storeId;
+  // staff 限自己所屬分店（POS 結帳、使用紀錄等操作）
+  if (actor.role === 'staff') return actor.storeId !== null && customer.storeId === actor.storeId;
   return false;
 }
 
@@ -30,5 +32,6 @@ export function customerVisibilityWhere(actor: AuthenticatedUser): Prisma.Custom
   if (isAdminRole(actor.role)) return {};
   if (actor.role === 'dealer') return { store: { region: actor.region ?? undefined } };
   if (actor.role === 'manager') return { storeId: actor.storeId ?? -1 };
+  if (actor.role === 'staff') return { storeId: actor.storeId ?? -1 };
   return { id: -1 };
 }

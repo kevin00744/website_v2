@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { customerUpdateSchema, type CustomerDetail, type CustomerUpdateInput } from '@website-v2/shared-types';
@@ -11,8 +11,10 @@ import { KioskButton } from '../kiosk/KioskButton';
 import { KioskInput } from '../kiosk/KioskInput';
 import { MaskedPhoneInput } from '../kiosk/MaskedInput';
 import { DisclaimerSignSection } from './DisclaimerSignSection';
-import { InventoryConsumeModal } from './InventoryConsumeModal';
-import { InventoryHistoryTab, type InventoryHistoryTabHandle } from './InventoryHistoryTab';
+import { ExosomeConsentModal } from './ExosomeConsentModal';
+import { TreatmentRecordTab } from './TreatmentRecordTab';
+import { NewTreatmentModal } from './NewTreatmentModal';
+import { POSCheckoutModal } from './POSCheckoutModal';
 
 interface CustomerDetailDrawerProps {
   customerId: number;
@@ -20,11 +22,11 @@ interface CustomerDetailDrawerProps {
   onDeleted: () => void;
 }
 
-type Tab = 'profile' | 'inventory';
+type Tab = 'profile' | 'treatments';
 
 /** 對齊後端 InventoryController 的 @Roles('manager')：admin/system_admin/manager 才能記錄商品使用 */
 function canConsumeInventory(role: AuthUser['role'] | undefined): boolean {
-  return role === 'admin' || role === 'system_admin' || role === 'manager';
+  return role === 'admin' || role === 'system_admin' || role === 'manager' || role === 'staff';
 }
 
 /** 對齊後端 CustomersController 的 DELETE :id 路由覆寫 @Roles('admin')：刪顧客只開放給 admin/system_admin */
@@ -43,11 +45,13 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
   const [saveError, setSaveError] = useState<string>();
   const [saved, setSaved] = useState(false);
   const [tab, setTab] = useState<Tab>('profile');
-  const [consumeModalOpen, setConsumeModalOpen] = useState(false);
+  const [treatmentModalOpen, setTreatmentModalOpen] = useState(false);
+  const [treatmentKey, setTreatmentKey] = useState(0);
+  const [posModalOpen, setPosModalOpen] = useState(false);
+  const [exosomeModalOpen, setExosomeModalOpen] = useState(false);
   const [user, setUser] = useState<AuthUser>();
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string>();
-  const historyRef = useRef<InventoryHistoryTabHandle>(null);
 
   useEffect(() => {
     setUser(getAuthUser());
@@ -144,15 +148,20 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
           <KioskButton variant={tab === 'profile' ? 'primary' : 'secondary'} onClick={() => setTab('profile')}>
             基本資料
           </KioskButton>
-          <KioskButton variant={tab === 'inventory' ? 'primary' : 'secondary'} onClick={() => setTab('inventory')}>
-            商品使用紀錄
+          <KioskButton variant={tab === 'treatments' ? 'primary' : 'secondary'} onClick={() => setTab('treatments')}>
+            使用紀錄
           </KioskButton>
         </div>
         <div className="flex gap-2">
           {canConsumeInventory(user?.role) && (
-            <KioskButton variant="secondary" onClick={() => setConsumeModalOpen(true)}>
-              ＋ 記錄商品使用
-            </KioskButton>
+            <>
+              <KioskButton variant="secondary" onClick={() => setPosModalOpen(true)}>
+                ＋ POS 結帳
+              </KioskButton>
+              <KioskButton variant="secondary" onClick={() => { setTreatmentModalOpen(true); setTab('treatments'); }}>
+                ＋ 紀錄商品使用
+              </KioskButton>
+            </>
           )}
           {canDeleteCustomer(user?.role) && (
             <KioskButton variant="danger" onClick={handleDelete} disabled={deleting}>
@@ -170,13 +179,55 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
 
       {tab === 'profile' && (
         <>
-          <DisclaimerSignSection
-            customerId={customerId}
-            disclaimerCustomerSignedAt={detail.disclaimerCustomerSignedAt}
-            disclaimerStaffSignedAt={detail.disclaimerStaffSignedAt}
-            disclaimerFullySigned={detail.disclaimerFullySigned}
-            onChanged={() => void loadDetail()}
-          />
+          {/* 外泌體同意書區塊：依顧客狀態顯示不同 UI */}
+          {!detail.isExosomeUser ? (
+            /* 未勾選外泌體：顯示「外泌體同意書」按鈕，取代簽署區塊 */
+            <div className="rounded-kiosk border border-slate-200 bg-slate-50 p-4">
+              <p className="text-kiosk-base font-semibold text-slate-700">外泌體同意書</p>
+              <p className="mt-1 text-sm text-slate-500">
+                若此顧客開始使用外泌體療程，請點擊下方按鈕完成雙方簽署，系統將自動標記並產生聲明書 PDF。
+              </p>
+              <div className="mt-3">
+                <KioskButton variant="secondary" onClick={() => setExosomeModalOpen(true)}>
+                  外泌體同意書（開始簽署）
+                </KioskButton>
+              </div>
+            </div>
+          ) : detail.disclaimerFullySigned ? (
+            /* 已完整簽署 */
+            <div className="rounded-kiosk border border-green-200 bg-green-50 p-4">
+              <p className="text-kiosk-base font-semibold text-green-700">✓ 外泌體同意書已完成雙方簽署</p>
+            </div>
+          ) : (
+            /* 外泌體使用者但未完成簽署（含服務人員已簽、顧客未簽的中間狀態） */
+            <>
+              <div className="rounded-kiosk border-2 border-amber-400 bg-amber-50 p-4">
+                <p className="text-kiosk-base font-bold text-amber-800">⚠️ 外泌體同意書尚未完成</p>
+                <p className="mt-1 text-sm text-amber-700">
+                  {detail.disclaimerStaffSignedAt
+                    ? '服務人員已簽名，請引導顧客完成下方簽署。'
+                    : '需完成服務人員與顧客雙方簽名。'}
+                </p>
+                {!detail.disclaimerStaffSignedAt && (
+                  <div className="mt-2">
+                    <KioskButton variant="secondary" onClick={() => setExosomeModalOpen(true)}>
+                      開始雙方簽署流程
+                    </KioskButton>
+                  </div>
+                )}
+              </div>
+              {/* 顧客待簽（服務人員已簽）：使用現有的 DisclaimerSignSection */}
+              {detail.disclaimerStaffSignedAt && (
+                <DisclaimerSignSection
+                  customerId={customerId}
+                  disclaimerCustomerSignedAt={detail.disclaimerCustomerSignedAt}
+                  disclaimerStaffSignedAt={detail.disclaimerStaffSignedAt}
+                  disclaimerFullySigned={detail.disclaimerFullySigned}
+                  onChanged={() => void loadDetail()}
+                />
+              )}
+            </>
+          )}
 
           <form onSubmit={handleSubmit(onSubmit)} className="flex flex-1 flex-col gap-5">
             <MaskedPhoneInput name="phone" control={control} label="電話" errorMessage={errors.phone?.message} />
@@ -225,18 +276,45 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
         </>
       )}
 
-      {tab === 'inventory' && <InventoryHistoryTab ref={historyRef} customerId={customerId} />}
+      {tab === 'treatments' && detail && (
+        <TreatmentRecordTab key={treatmentKey} customerId={customerId} storeId={detail.storeId} />
+      )}
 
-      {canConsumeInventory(user?.role) && (
-        <InventoryConsumeModal
-          open={consumeModalOpen}
-          onClose={() => setConsumeModalOpen(false)}
-          customerId={customerId}
+      <NewTreatmentModal
+        open={treatmentModalOpen}
+        customerId={customerId}
+        onClose={() => setTreatmentModalOpen(false)}
+        onCreated={() => {
+          setTreatmentModalOpen(false);
+          setTreatmentKey((k) => k + 1);
+        }}
+      />
+
+      <ExosomeConsentModal
+        open={exosomeModalOpen}
+        customerId={customerId}
+        customerName={detail?.name ?? ''}
+        nationalId={detail?.nationalId ?? null}
+        onCompleted={() => {
+          setExosomeModalOpen(false);
+          void loadDetail();
+        }}
+        onClose={() => setExosomeModalOpen(false)}
+      />
+
+      {detail && (
+        <POSCheckoutModal
+          open={posModalOpen}
           storeId={detail.storeId}
-          onRecorded={() => {
-            setConsumeModalOpen(false);
-            setTab('inventory');
-            historyRef.current?.reload();
+          customerId={customerId}
+          customerName={detail.name}
+          isExosomeUser={detail.isExosomeUser}
+          exosomeConsentSignatureUrl={detail.exosomeConsentSignatureUrl}
+          onClose={() => setPosModalOpen(false)}
+          onCompleted={() => {
+            setPosModalOpen(false);
+            setTab('treatments');
+            setTreatmentKey((k) => k + 1);
           }}
         />
       )}

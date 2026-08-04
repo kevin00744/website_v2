@@ -41,6 +41,12 @@ interface FrozenDisclaimerSnapshot {
 }
 
 /**
+ * 服務人員事後補簽免責聲明書（用於非外泌體顧客後來改為使用外泌體的情境）：
+ * 複製 createCustomerWithSignature 裡的服務人員簽署邏輯，作為獨立的可重入操作。
+ * 完成後同步將顧客 isExosomeUser 標記為 true。
+ */
+
+/**
  * 服務人員那一次簽名已經在 CustomersService.createCustomerWithSignature 裡完成
  * （建檔跟服務人員簽署是同一筆 transaction，見該方法的說明）。這個 service 負責「顧客之後補簽」，
  * 平行於 CustomerDocumentService 處理 id_document 的雙簽署模式——順序對調：服務人員先簽、
@@ -49,6 +55,111 @@ interface FrozenDisclaimerSnapshot {
 @Injectable()
 export class CustomerDisclaimerService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * 服務人員事後補簽免責聲明書（for 非外泌體轉換為外泌體使用者的情境）。
+   * 建立 PDF、寫入服務人員簽名、設定 disclaimerStaffSignedAt、並將 isExosomeUser 標記為 true。
+   */
+  async signStaffDisclaimer(actor: AuthenticatedUser, customerId: number, input: SignDisclaimerInput): Promise<DisclaimerStatus> {
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: customerId, deletedAt: null },
+      select: {
+        id: true, name: true, phone: true, nationalId: true, address: true,
+        customerCode: true,
+        disclaimerStaffSignedAt: true,
+        storeId: true,
+        store: { select: { name: true, code: true, region: true } },
+      },
+    });
+    if (!customer || !canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
+      throw new AppError('CUSTOMER_NOT_FOUND', `customer ${customerId} not found`, 404);
+    }
+    if (customer.disclaimerStaffSignedAt) {
+      throw new AppError('DISCLAIMER_ALREADY_SIGNED', '服務人員已簽署，請進行顧客簽署步驟', 409);
+    }
+
+    const template = await this.prisma.disclaimerTemplate.findFirst({
+      where: { isActive: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!template) throw new AppError('DISCLAIMER_TEMPLATE_NOT_FOUND', '找不到啟用中的免責聲明書範本', 404);
+
+    const headerData: DisclaimerHeaderData = {
+      customerName: customer.name,
+      customerCode: customer.customerCode,
+      nationalId: customer.nationalId ?? '（未填）',
+      phone: customer.phone ?? '（未填）',
+      address: customer.address ?? '',
+      storeName: customer.store.name,
+      storeCode: customer.store.code,
+    };
+    const sections = template.sections as unknown as DisclaimerSection[];
+    const { pdfBytes, anchors } = await buildDisclaimerPdf({ title: template.title, sections }, headerData);
+
+    const signedAt = new Date();
+    const signedPdfBytes = await applySignaturesToDisclaimerPdf(pdfBytes, anchors, [
+      {
+        role: 'staff',
+        signaturePngBytes: decodeBase64Png(input.signatureImageUrl),
+        dateLabel: formatDateLabel(signedAt),
+      },
+    ]);
+    const disclaimerPath = await saveCustomerFile(customerId, DISCLAIMER_FILE_NAME, signedPdfBytes);
+
+    const contentSnapshot = {
+      templateVersion: template.version,
+      title: template.title,
+      sections,
+      headerData,
+      signerRole: 'staff',
+      signedAt: signedAt.toISOString(),
+    };
+    const contentHash = hashJson(contentSnapshot);
+    const recordHash = buildRecordHash({
+      customerId,
+      documentType: 'disclaimer',
+      signerRole: 'staff',
+      contentHash,
+      signatureImageUrl: input.signatureImageUrl,
+      signedAt: signedAt.toISOString(),
+    });
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.signature.create({
+        data: {
+          customerId,
+          documentType: 'disclaimer',
+          signerRole: 'staff',
+          signerUserId: actor.id,
+          signatureImageUrl: input.signatureImageUrl,
+          signaturePointsJson: input.signaturePoints as Prisma.InputJsonValue | undefined,
+          contentSnapshot: contentSnapshot as unknown as Prisma.InputJsonValue,
+          contentHash,
+          recordHash,
+          signedAt,
+          ipAddress: input.ipAddress,
+          userAgent: input.userAgent,
+          deviceInfo: input.deviceInfo,
+        },
+      });
+      await tx.customer.update({
+        where: { id: customerId },
+        data: {
+          disclaimerStaffSignedAt: signedAt,
+          disclaimerStaffId: actor.id,
+          disclaimerPath,
+          isExosomeUser: true,
+        },
+      });
+    });
+
+    return {
+      hasDisclaimer: true,
+      disclaimerCustomerSignedAt: null,
+      disclaimerStaffSignedAt: signedAt.toISOString(),
+      disclaimerFullySigned: false,
+    };
+  }
 
   async signDisclaimer(actor: AuthenticatedUser, customerId: number, input: SignDisclaimerInput): Promise<DisclaimerStatus> {
     const customer = await this.prisma.customer.findFirst({

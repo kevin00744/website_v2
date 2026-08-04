@@ -33,6 +33,8 @@ export class AuthService {
       throw new AppError('AUTH_INVALID_CREDENTIALS', 'invalid email or password', 401);
     }
 
+    const storeFeatures = await this.getStoreFeatures(user.storeId);
+
     const authenticatedUser: AuthenticatedUser = {
       id: user.id,
       email: user.email,
@@ -40,10 +42,18 @@ export class AuthService {
       role: user.role,
       storeId: user.storeId,
       region: user.region,
+      storeFeatures,
     };
 
     const accessToken = await this.jwtService.signAsync({ sub: user.id });
     return { accessToken, user: authenticatedUser };
+  }
+
+  /** 給 /me 端點即時查詢（features 可能被店長更新，不能靠 JWT payload 的快取值） */
+  async getStoreFeatures(storeId: number | null): Promise<Record<string, boolean> | null> {
+    if (!storeId) return null;
+    const store = await this.prisma.store.findUnique({ where: { id: storeId }, select: { features: true } });
+    return (store?.features as Record<string, boolean> | null) ?? null;
   }
 
   /**

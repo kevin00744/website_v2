@@ -5,10 +5,10 @@ interface StoreCardListProps {
   stores: StoreSummary[];
   onToggleStatus: (store: StoreSummary) => void;
   togglingId?: number;
-  /** 啟用/停用目前後端只開放 admin/system_admin，dealer 看得到分店但不顯示這顆按鈕，避免點下去得到一個 403 */
   canToggleStatus: boolean;
   onDelete?: (store: StoreSummary) => void;
   deletingId?: number;
+  onEdit?: (store: StoreSummary) => void;
 }
 
 const REGION_LABEL: Record<StoreSummary['region'], string> = {
@@ -18,7 +18,7 @@ const REGION_LABEL: Record<StoreSummary['region'], string> = {
 };
 
 /** 手機版（<768px）：卡片式列表，重點突出編號與名稱，表格在小螢幕擠成一團很難點 */
-export function StoreCardList({ stores, onToggleStatus, togglingId, canToggleStatus, onDelete, deletingId }: StoreCardListProps) {
+export function StoreCardList({ stores, onToggleStatus, togglingId, canToggleStatus, onDelete, deletingId, onEdit }: StoreCardListProps) {
   return (
     <ul className="flex flex-col gap-3 md:hidden">
       {stores.map((store) => (
@@ -40,6 +40,11 @@ export function StoreCardList({ stores, onToggleStatus, togglingId, canToggleSta
             </span>
           </div>
           <div className="flex gap-2">
+            {onEdit && (
+              <KioskButton variant="secondary" fullWidth onClick={() => onEdit(store)}>
+                編輯
+              </KioskButton>
+            )}
             {canToggleStatus && (
               <KioskButton
                 variant={store.isActive ? 'ghost' : 'secondary'}
@@ -47,7 +52,7 @@ export function StoreCardList({ stores, onToggleStatus, togglingId, canToggleSta
                 onClick={() => onToggleStatus(store)}
                 disabled={togglingId === store.id}
               >
-                {store.isActive ? '停用此分店' : '啟用此分店'}
+                {store.isActive ? '停用' : '啟用'}
               </KioskButton>
             )}
             {onDelete && (

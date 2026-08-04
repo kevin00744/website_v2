@@ -53,6 +53,8 @@ export interface CustomerDetail {
   documentStaffSignedAt: string | null;
   documentFullySigned: boolean;
   canDelete: boolean;
+  isExosomeUser: boolean;
+  exosomeConsentSignatureUrl: string | null;
 }
 
 interface SignaturePayloadInput {
@@ -70,6 +72,7 @@ interface CreateCustomerWithSignatureInput {
   note?: string;
   /** manager 角色會被強制改成自己所屬的店，這裡的值只在 admin/system_admin/dealer 建檔時才會真正採用 */
   storeId?: number;
+  isExosomeUser?: boolean;
   signature: SignaturePayloadInput;
   ipAddress?: string;
   userAgent?: string;
@@ -111,6 +114,8 @@ const DETAIL_SELECT = {
   documentPath: true,
   documentCustomerSignedAt: true,
   documentStaffSignedAt: true,
+  isExosomeUser: true,
+  exosomeConsentSignatureUrl: true,
   store: { select: { name: true, region: true } },
 } satisfies Prisma.CustomerSelect;
 
@@ -251,6 +256,7 @@ export class CustomersService {
             note: input.note,
             storeId: store.id,
             createdBy: actor.id,
+            isExosomeUser: input.isExosomeUser ?? false,
           },
         });
 
@@ -346,13 +352,14 @@ export class CustomersService {
    * - admin/system_admin 必須指定 storeId（他們自己沒有固定門店），並驗證該店真的存在
    */
   private async resolveCreateStore(actor: AuthenticatedUser, requestedStoreId?: number) {
-    if (actor.role === 'manager') {
+    // manager 和 staff 都強制使用自己所屬的分店（避免越權建到別的店）
+    if (actor.role === 'manager' || actor.role === 'staff') {
       if (!actor.storeId) {
-        throw new AppError('STORE_REQUIRED', `manager ${actor.id} has no assigned store`, 500);
+        throw new AppError('STORE_REQUIRED', `${actor.role} ${actor.id} has no assigned store`, 500);
       }
       const store = await this.prisma.store.findFirst({ where: { id: actor.storeId, deletedAt: null } });
       if (!store) {
-        throw new AppError('STORE_REQUIRED', 'manager assigned store no longer exists', 500);
+        throw new AppError('STORE_REQUIRED', 'assigned store no longer exists', 500);
       }
       return store;
     }
@@ -373,10 +380,55 @@ export class CustomersService {
    * 就算 controller 哪天手滑把整包 request body 直接傳進來，這裡解構時也只會取
    * phone/address/line/email/note，name/nationalId 永遠不會被讀到、更不會被寫進 DB。
    */
+  /**
+   * 快速建立非外泌體顧客（無需簽署免責聲明書）。
+   * 必填：name + phone；nationalId 選填。
+   * 若後續勾選外泌體，可在顧客詳情頁補填聲明書。
+   */
+  async createQuickCustomer(
+    actor: AuthenticatedUser,
+    input: {
+      name: string;
+      phone: string;
+      nationalId?: string;
+      address?: string;
+      line?: string;
+      email?: string;
+      note?: string;
+      storeId?: number;
+    },
+  ): Promise<CustomerDetail> {
+    const store = await this.resolveCreateStore(actor, input.storeId);
+    if (!input.name?.trim()) throw new AppError('CUSTOMER_NAME_REQUIRED', 'name is required');
+    if (!input.phone?.trim()) throw new AppError('CUSTOMER_PHONE_REQUIRED', '電話為必填欄位');
+
+    const existingPhone = await this.prisma.customer.findFirst({
+      where: { phone: input.phone, storeId: store.id, deletedAt: null },
+    });
+    if (existingPhone) throw new AppError('CUSTOMER_PHONE_EXISTS', `phone ${input.phone} already exists`, 409);
+
+    const customer = await this.prisma.customer.create({
+      data: {
+        name: input.name.trim(),
+        phone: input.phone.trim(),
+        nationalId: input.nationalId?.trim().toUpperCase() || null,
+        address: input.address,
+        line: input.line,
+        email: input.email,
+        note: input.note,
+        storeId: store.id,
+        createdBy: actor.id,
+        isExosomeUser: false,
+      },
+      select: DETAIL_SELECT,
+    });
+    return toDetail(customer);
+  }
+
   async updateCustomer(actor: AuthenticatedUser, id: number, input: UpdateCustomerInput): Promise<CustomerDetail> {
     const existing = await this.prisma.customer.findFirst({
       where: { id, deletedAt: null },
-      select: { id: true, phone: true, storeId: true, store: { select: { region: true } } },
+      select: { id: true, phone: true, nationalId: true, storeId: true, store: { select: { region: true } } },
     });
     if (!existing || !canActorAccessCustomer(actor, { storeId: existing.storeId, storeRegion: existing.store.region })) {
       throw new AppError('CUSTOMER_NOT_FOUND', `customer ${id} not found or not visible to actor ${actor.id}`, 404);
@@ -392,10 +444,25 @@ export class CustomersService {
       }
     }
 
-    const { phone, address, line, email, note } = input;
+    const { phone, address, line, email, note, isExosomeUser } = input as typeof input & { isExosomeUser?: boolean };
+    const inputNationalId = (input as { nationalId?: string }).nationalId;
+
+    // nationalId 僅允許「補填」（目前為 null 才能設定），不允許修改已有的值
+    let nationalIdUpdate: string | undefined;
+    if (inputNationalId?.trim()) {
+      if (existing.nationalId) {
+        throw new AppError('CUSTOMER_NATIONAL_ID_LOCKED', '身分證字號已填寫，無法修改', 409);
+      }
+      nationalIdUpdate = inputNationalId.trim().toUpperCase();
+    }
+
     const updated = await this.prisma.customer.update({
       where: { id },
-      data: { phone, address, line, email, note },
+      data: {
+        phone, address, line, email, note,
+        ...(isExosomeUser !== undefined ? { isExosomeUser } : {}),
+        ...(nationalIdUpdate ? { nationalId: nationalIdUpdate } : {}),
+      },
       select: DETAIL_SELECT,
     });
 
@@ -415,6 +482,115 @@ export class CustomersService {
       throw new AppError('CUSTOMER_NOT_FOUND', `customer ${id} not found`, 404);
     }
     await this.prisma.customer.update({ where: { id }, data: { deletedAt: new Date() } });
+  }
+
+  /**
+   * POS 扣堂選擇器：列出顧客名下尚有剩餘堂數的課程。
+   * 前端用此端點動態呈現「顧客可扣哪些課程的哪幾堂」，讓店員挑選。
+   */
+  async getCustomerWallet(actor: AuthenticatedUser, customerId: number) {
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: customerId, deletedAt: null },
+      select: { storeId: true, store: { select: { region: true } } },
+    });
+    if (!customer) throw new AppError('CUSTOMER_NOT_FOUND', '找不到此顧客', 404);
+    if (!canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
+      throw new AppError('PERMISSION_DENIED', '無權限存取此顧客資料', 403);
+    }
+    const wallet = await this.prisma.customerWallet.findUnique({ where: { customerId } });
+    return {
+      balance: wallet?.balance ?? 0,
+      bonusBalance: wallet?.bonusBalance ?? 0,
+      total: (wallet?.balance ?? 0) + (wallet?.bonusBalance ?? 0),
+    };
+  }
+
+  async topUpWallet(
+    actor: AuthenticatedUser,
+    customerId: number,
+    input: { amount: number; paymentMethod: string; note?: string },
+  ) {
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: customerId, deletedAt: null },
+      select: { storeId: true, store: { select: { region: true } } },
+    });
+    if (!customer) throw new AppError('CUSTOMER_NOT_FOUND', '找不到此顧客', 404);
+    if (!canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
+      throw new AppError('PERMISSION_DENIED', '無權限存取此顧客資料', 403);
+    }
+    if (!Number.isInteger(input.amount) || input.amount <= 0) {
+      throw new AppError('FINANCIAL_INVALID_AMOUNT', '儲值金額必須為正整數', 400);
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const wallet = await tx.customerWallet.upsert({
+        where: { customerId },
+        create: { customerId, balance: input.amount, bonusBalance: 0 },
+        update: { balance: { increment: input.amount } },
+      });
+      await tx.walletLog.create({
+        data: {
+          customerId,
+          storeId: customer.storeId,
+          type: 'top_up',
+          amount: input.amount,
+          bonusAmount: 0,
+          performedById: actor.id,
+          note: input.note ?? '直接儲值',
+        },
+      });
+      await tx.financialRecord.create({
+        data: {
+          storeId: customer.storeId,
+          type: 'income',
+          category: 'top_up',
+          amount: input.amount,
+          paymentMethod: input.paymentMethod as never,
+          performedById: actor.id,
+          description: `顧客 #${customerId} 直接儲值`,
+        },
+      });
+      if (input.paymentMethod === 'cash') {
+        await tx.store.update({
+          where: { id: customer.storeId },
+          data: { pettyCashBalance: { increment: input.amount } },
+        });
+      }
+      return { balance: wallet.balance, bonusBalance: wallet.bonusBalance };
+    });
+  }
+
+  async listCustomerCourses(actor: AuthenticatedUser, customerId: number) {
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: customerId, deletedAt: null },
+      select: { storeId: true, store: { select: { region: true } } },
+    });
+    if (!customer) throw new AppError('CUSTOMER_NOT_FOUND', '找不到此顧客', 404);
+    if (!canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
+      throw new AppError('PERMISSION_DENIED', '無權限存取此顧客資料', 403);
+    }
+
+    const courses = await this.prisma.customerCourse.findMany({
+      where: {
+        customerId,
+        usedSessions: { lt: this.prisma.customerCourse.fields.totalSessions },
+      },
+      include: {
+        serviceItem: { select: { id: true, name: true, price: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return courses
+      .filter((c) => c.usedSessions < c.totalSessions)
+      .map((c) => ({
+        id: c.id,
+        serviceItem: c.serviceItem,
+        totalSessions: c.totalSessions,
+        usedSessions: c.usedSessions,
+        remainingSessions: c.totalSessions - c.usedSessions,
+        createdAt: c.createdAt.toISOString(),
+      }));
   }
 }
 
@@ -455,5 +631,7 @@ function toDetail(customer: DetailRow): CustomerDetail {
     documentFullySigned,
     // 沿用 cms 的規則：雙方都簽完同意書後就不能再刪除（一律先擋，RBAC 上線後再依角色放寬）。
     canDelete: !disclaimerFullySigned,
+    isExosomeUser: customer.isExosomeUser,
+    exosomeConsentSignatureUrl: customer.exosomeConsentSignatureUrl,
   };
 }

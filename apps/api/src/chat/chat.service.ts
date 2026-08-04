@@ -214,7 +214,7 @@ export class ChatService {
       if (!subject.storeId) return [];
       const store = await this.prisma.store.findUnique({ where: { id: subject.storeId }, select: { region: true } });
       if (!store) return [];
-      const [admins, dealers] = await Promise.all([
+      const [admins, dealers, storeStaff] = await Promise.all([
         this.prisma.user.findMany({
           where: { deletedAt: null, isActive: true, role: { in: ['admin', 'system_admin'] } },
           select: { id: true },
@@ -223,8 +223,29 @@ export class ChatService {
           where: { deletedAt: null, isActive: true, role: 'dealer', region: store.region },
           select: { id: true },
         }),
+        // 同一分店的 staff 也在清單裡
+        this.prisma.user.findMany({
+          where: { deletedAt: null, isActive: true, role: 'staff', storeId: subject.storeId, id: { not: subject.id } },
+          select: { id: true },
+        }),
       ]);
-      return [...admins, ...dealers].map((user) => user.id);
+      return [...admins, ...dealers, ...storeStaff].map((user) => user.id);
+    }
+
+    // staff：可以聯絡同一分店的 manager 和其他 staff
+    if (subject.role === 'staff') {
+      if (!subject.storeId) return [];
+      const storeMembers = await this.prisma.user.findMany({
+        where: {
+          deletedAt: null,
+          isActive: true,
+          storeId: subject.storeId,
+          id: { not: subject.id },
+          role: { in: ['manager', 'staff'] },
+        },
+        select: { id: true },
+      });
+      return storeMembers.map((user) => user.id);
     }
 
     return [];
@@ -244,6 +265,9 @@ export class ChatService {
         select: { contactUserId: true },
       });
       contactIds = overrides.length > 0 ? overrides.map((o) => o.contactUserId) : await this.resolveDefaultContactIds(actor);
+    } else if (actor.role === 'staff') {
+      // staff 不受 ChatContactPermission 覆寫機制管制，直接用預設清單（同分店的 manager/staff）
+      contactIds = await this.resolveDefaultContactIds(actor);
     } else {
       contactIds = await this.resolveDefaultContactIds(actor);
     }

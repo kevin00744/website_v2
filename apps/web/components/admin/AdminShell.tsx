@@ -6,61 +6,10 @@ import { ApiError } from '@/lib/api-client';
 import { clearAuth, getAuthUser, type AuthUser } from '@/lib/auth';
 import { listConversations } from '@/lib/chat-api';
 import { disconnectChatSocket, getChatSocket } from '@/lib/chat-socket';
+import { NAVIGATION_CONFIG } from '@/lib/navigationConfig';
+import { useStoreFeatures, hasFeature } from '@/hooks/useStoreFeatures';
 import { KioskButton } from './kiosk/KioskButton';
 import { ChatInboxModal } from './chat/ChatInboxModal';
-
-const NAV_ITEMS = [
-  { href: '/customers', label: '顧客資料' },
-  { href: '/inventory', label: '庫存管理' },
-];
-
-const STORE_MANAGEMENT_NAV_ITEMS = [{ href: '/stores', label: '分店管理' }];
-const PRODUCT_MANAGEMENT_NAV_ITEMS = [{ href: '/products', label: '商品管理' }];
-const CONTACT_MESSAGE_NAV_ITEMS = [{ href: '/contact-messages', label: '聯絡訊息' }];
-const CONTACT_CATEGORY_NAV_ITEMS = [{ href: '/contact-categories', label: '詢問類別管理' }];
-const USER_MANAGEMENT_NAV_ITEMS = [{ href: '/users', label: '帳號管理' }];
-const CHAT_CONTACTS_NAV_ITEMS = [{ href: '/chat-contacts', label: '聊天清單管理' }];
-const CMS_NAV_ITEMS = [
-  { href: '/cms', label: '官網頁面管理' },
-  { href: '/cms-templates', label: '範本庫管理' },
-  { href: '/cms-articles', label: '文章管理' },
-];
-const PERSONAL_NAV_ITEMS = [{ href: '/settings', label: '個人設定' }];
-
-/** 對齊 StoresController 的 @Roles('dealer','manager')：admin/system_admin/dealer 看得到分店管理 */
-function canManageStores(role: AuthUser['role'] | undefined): boolean {
-  return role === 'admin' || role === 'system_admin' || role === 'dealer';
-}
-
-/** 對齊 ProductsController 的 @Roles('system_admin')：只有 admin/system_admin 看得到商品管理 */
-function canManageProducts(role: AuthUser['role'] | undefined): boolean {
-  return role === 'admin' || role === 'system_admin';
-}
-
-/** 對齊 ContactController 的 admin/messages 路由：admin/system_admin/dealer/manager 都看得到（範圍各自限縮） */
-function canViewContactMessages(role: AuthUser['role'] | undefined): boolean {
-  return role === 'admin' || role === 'system_admin' || role === 'dealer' || role === 'manager';
-}
-
-/** 對齊 ContactController 的 admin/categories 路由 @Roles('system_admin')：只有 admin/system_admin 看得到 */
-function canManageContactCategories(role: AuthUser['role'] | undefined): boolean {
-  return role === 'admin' || role === 'system_admin';
-}
-
-/** 對齊 UsersController：admin/system_admin 看得到完整帳號管理，dealer 也看得到（範圍是自己區域的店長帳號） */
-function canManageUsers(role: AuthUser['role'] | undefined): boolean {
-  return role === 'admin' || role === 'system_admin' || role === 'dealer';
-}
-
-/** 對齊 ChatController 的 contact-permissions 系列路由 @Roles('system_admin')：只有 admin/system_admin 看得到聊天清單管理 */
-function canManageChatContacts(role: AuthUser['role'] | undefined): boolean {
-  return role === 'admin' || role === 'system_admin';
-}
-
-/** 對齊 CmsController 的 admin/pages 系列路由 @Roles('admin')：只有 admin/system_admin 看得到官網頁面管理 */
-function canManageCms(role: AuthUser['role'] | undefined): boolean {
-  return role === 'admin' || role === 'system_admin';
-}
 
 const ROLE_LABEL: Record<AuthUser['role'], string> = {
   system_admin: '系統管理員',
@@ -68,6 +17,7 @@ const ROLE_LABEL: Record<AuthUser['role'], string> = {
   editor: '編輯',
   dealer: '經銷商',
   manager: '店長',
+  staff: '服務人員',
 };
 
 function sumUnread(conversations: ConversationSummary[]): number {
@@ -77,12 +27,17 @@ function sumUnread(conversations: ConversationSummary[]): number {
 /**
  * iPad/桌機：固定側邊欄 + 內容區。
  * 手機（<768px）：頂部列 + 漢堡選單，點開後蓋滿全螢幕（避免擠成一排小字看不清楚）。
+ *
+ * 選單渲染邏輯：遍歷 NAVIGATION_CONFIG，雙層 filter：
+ * 1. roleGuard：角色不符直接排除
+ * 2. featureKey：分店未啟用此功能排除（admin/system_admin 自動通過 hasFeature 超集邏輯）
  */
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [user, setUser] = useState<AuthUser>();
+  const storeFeatures = useStoreFeatures();
 
   useEffect(() => {
     setUser(getAuthUser());
@@ -128,17 +83,14 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     void refreshUnreadCount();
   }
 
-  const navItems = [
-    ...NAV_ITEMS,
-    ...(canManageStores(user?.role) ? STORE_MANAGEMENT_NAV_ITEMS : []),
-    ...(canManageProducts(user?.role) ? PRODUCT_MANAGEMENT_NAV_ITEMS : []),
-    ...(canViewContactMessages(user?.role) ? CONTACT_MESSAGE_NAV_ITEMS : []),
-    ...(canManageContactCategories(user?.role) ? CONTACT_CATEGORY_NAV_ITEMS : []),
-    ...(canManageUsers(user?.role) ? USER_MANAGEMENT_NAV_ITEMS : []),
-    ...(canManageChatContacts(user?.role) ? CHAT_CONTACTS_NAV_ITEMS : []),
-    ...(canManageCms(user?.role) ? CMS_NAV_ITEMS : []),
-    ...(user ? PERSONAL_NAV_ITEMS : []),
-  ];
+  // 雙層 filter：先角色守門，再 feature 守門
+  const navItems = user
+    ? NAVIGATION_CONFIG.filter((item) => {
+        if (item.roleGuard && !item.roleGuard(user.role)) return false;
+        if (item.featureKey && !hasFeature(storeFeatures, item.featureKey, user.role)) return false;
+        return true;
+      })
+    : [];
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50 md:flex-row">
@@ -218,7 +170,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               ✕
             </KioskButton>
           </div>
-          <nav className="flex flex-col gap-2 p-4">
+          <nav className="flex flex-1 flex-col gap-2 overflow-y-auto p-4">
             {navItems.map((item) => (
               <a
                 key={item.href}
@@ -230,6 +182,16 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               </a>
             ))}
           </nav>
+          {user && (
+            <div className="border-t border-slate-200 p-4">
+              <p className="mb-3 text-kiosk-base text-slate-500">
+                {user.name}（{ROLE_LABEL[user.role]}）
+              </p>
+              <KioskButton variant="ghost" fullWidth onClick={handleLogout}>
+                登出
+              </KioskButton>
+            </div>
+          )}
         </div>
       )}
 

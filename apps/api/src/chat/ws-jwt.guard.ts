@@ -59,8 +59,9 @@ export class WsJwtGuard implements CanActivate {
       });
       if (!user) return null;
 
-      (client.data as { user: AuthenticatedUser }).user = user;
-      return user;
+      const enriched: AuthenticatedUser = { ...user, storeFeatures: null };
+      (client.data as { user: AuthenticatedUser }).user = enriched;
+      return enriched;
     } catch {
       return null;
     }
