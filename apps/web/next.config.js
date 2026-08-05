@@ -3,6 +3,9 @@ const nextConfig = {
   // packages/copy 跟 packages/shared-types 是 workspace 內的原始 TS 套件（沒有預先編譯），
   // 需要讓 Next.js 的編譯器一併處理，否則 import 進來的會是沒轉譯過的 TS 語法。
   transpilePackages: ['@website-v2/copy', '@website-v2/shared-types'],
+  // 允許從非 localhost 網域（例如透過 Cloudflare Tunnel 或區網 IP）存取 /_next/static/ 資源。
+  // Next.js 14 起 dev mode 預設封鎖 cross-origin /_next/* 請求，造成 CSS/JS 全部載入失敗。
+  allowedDevOrigins: ['tsanyentest.com', '*.tsanyentest.com'],
   async rewrites() {
     return [
       // CMS 圖片故意走「同源」相對路徑，不直接給瀏覽器絕對網址 http://localhost:3101——

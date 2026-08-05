@@ -12,28 +12,28 @@ import type { AuthenticatedUser } from '../auth/types';
  * 重複宣告的維護成本遠低於額外拉一條跨套件依賴的成本。
  */
 const TAIWAN_CITY_REGION: Record<string, Region> = {
-  台北市: 'north',
-  新北市: 'north',
-  桃園市: 'north',
-  新竹市: 'north',
-  新竹縣: 'north',
-  基隆市: 'north',
-  宜蘭縣: 'north',
-  台中市: 'central',
-  苗栗縣: 'central',
-  彰化縣: 'central',
-  南投縣: 'central',
-  雲林縣: 'central',
-  嘉義市: 'south',
-  嘉義縣: 'south',
-  台南市: 'south',
-  高雄市: 'south',
-  屏東縣: 'south',
-  澎湖縣: 'south',
-  台東縣: 'south',
-  花蓮縣: 'south',
-  金門縣: 'south',
-  連江縣: 'south',
+  台北市: 'A',
+  新北市: 'A',
+  桃園市: 'A',
+  新竹市: 'A',
+  新竹縣: 'A',
+  基隆市: 'A',
+  宜蘭縣: 'A',
+  台中市: 'B',
+  苗栗縣: 'B',
+  彰化縣: 'B',
+  南投縣: 'B',
+  雲林縣: 'B',
+  嘉義市: 'C',
+  嘉義縣: 'C',
+  台南市: 'C',
+  高雄市: 'C',
+  屏東縣: 'C',
+  澎湖縣: 'C',
+  台東縣: 'C',
+  花蓮縣: 'C',
+  金門縣: 'C',
+  連江縣: 'C',
 };
 
 export interface SubmitContactMessageInput {
@@ -232,7 +232,7 @@ export class ContactService {
       ...(isHandled !== undefined ? { isHandled } : {}),
     };
 
-    if (actor.role === 'dealer') {
+    if (actor.role === 'dealer' || actor.role === 'general_agent') {
       if (!actor.region) return [];
       where.region = actor.region;
     } else if (actor.role === 'manager') {
@@ -262,7 +262,7 @@ export class ContactService {
     if (!existing) {
       throw new AppError('CONTACT_MESSAGE_NOT_FOUND', `contact message ${id} not found`, 404);
     }
-    if (actor.role === 'dealer' && existing.region !== actor.region) {
+    if ((actor.role === 'dealer' || actor.role === 'general_agent') && existing.region !== actor.region) {
       throw new AppError('CONTACT_MESSAGE_NOT_FOUND', `contact message ${id} not visible to actor ${actor.id}`, 404);
     }
     if (existing.category.kind !== 'experience') {
@@ -273,7 +273,7 @@ export class ContactService {
     if (!store) {
       throw new AppError('STORE_NOT_FOUND', 'selected store does not exist', 404);
     }
-    if (actor.role === 'dealer' && store.region !== actor.region) {
+    if ((actor.role === 'dealer' || actor.role === 'general_agent') && store.region !== actor.region) {
       throw new AppError('STORE_NOT_IN_REGION', "selected store is outside dealer's region", 403);
     }
 
@@ -294,7 +294,7 @@ export class ContactService {
     if (!existing) {
       throw new AppError('CONTACT_MESSAGE_NOT_FOUND', `contact message ${id} not found`, 404);
     }
-    if (actor.role === 'dealer' && existing.region !== actor.region) {
+    if ((actor.role === 'dealer' || actor.role === 'general_agent') && existing.region !== actor.region) {
       throw new AppError('CONTACT_MESSAGE_NOT_FOUND', `contact message ${id} not visible to actor ${actor.id}`, 404);
     }
     if (actor.role === 'manager' && existing.storeId !== actor.storeId) {

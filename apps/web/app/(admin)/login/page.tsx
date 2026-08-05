@@ -21,14 +21,14 @@ export default function LoginPage() {
   } = useForm<LoginInput>({
     resolver: zodResolver(loginSchema),
     mode: 'onChange',
-    defaultValues: { email: '', password: '' },
+    defaultValues: { username: '', password: '' },
   });
 
   async function onSubmit(values: LoginInput) {
     setSubmitting(true);
     setSubmitError(undefined);
     try {
-      const result = await login(values.email, values.password);
+      const result = await login(values.username, values.password);
       saveAuth(result.accessToken, result.user);
       // 故意用整頁導航（不是 router.push）：AdminShell 是 (admin) layout 裡常駐的 client component，
       // 它的 useEffect(() => setUser(getAuthUser()), []) 只在第一次掛載時讀一次 cookie——
@@ -54,14 +54,14 @@ export default function LoginPage() {
         <h1 className="text-center text-kiosk-xl font-bold text-slate-900">店員登入</h1>
 
         <KioskInput
-          label="帳號（Email）"
-          type="email"
+          label="帳號 (username)"
+          type="text"
           required
           autoComplete="username"
-          placeholder="請輸入帳號"
-          errorMessage={errors.email?.message}
-          isValid={Boolean(dirtyFields.email) && !errors.email}
-          {...register('email')}
+          placeholder="請輸入登入帳號"
+          errorMessage={errors.username?.message}
+          isValid={Boolean(dirtyFields.username) && !errors.username}
+          {...register('username')}
         />
         <KioskInput
           label="密碼"

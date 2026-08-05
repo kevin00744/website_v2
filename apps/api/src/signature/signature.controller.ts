@@ -18,7 +18,7 @@ interface CreateSignatureDto {
 
 @Controller('signature')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('dealer', 'manager')
+@Roles('dealer', 'manager', 'general_agent')
 export class SignatureController {
   constructor(private readonly signatureService: SignatureService) {}
 

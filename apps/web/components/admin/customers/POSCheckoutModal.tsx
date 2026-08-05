@@ -93,7 +93,7 @@ export function POSCheckoutModal({
 
   // Step 2 付款（服務模式）
   const [consumptionType, setConsumptionType] = useState<ConsumptionType>('single_purchase');
-  /** course_deduction 時選擇的 CustomerCourse id */
+  /** course_deduction 時選擇的 serviceItemId（合併後），以字串儲存 */
   const [selectedCourseId, setSelectedCourseId] = useState('');
   const [sessionsDeducted, setSessionsDeducted] = useState('1');
   /** 多重支付：每筆 { method, amount } */
@@ -172,6 +172,25 @@ export function POSCheckoutModal({
     setStep('payment');
   }
 
+  // 按 serviceItemId 合併同一服務品項的多張課程（A+B 套裝各含相同品項時顯示合計）
+  const mergedCourses = customerCourses
+    ? Object.values(
+        customerCourses.reduce(
+          (acc, c) => {
+            const key = c.serviceItem.id;
+            if (!acc[key]) {
+              acc[key] = { ...c, totalSessions: 0, usedSessions: 0, remainingSessions: 0 };
+            }
+            acc[key].totalSessions += c.totalSessions;
+            acc[key].usedSessions += c.usedSessions;
+            acc[key].remainingSessions += c.remainingSessions;
+            return acc;
+          },
+          {} as Record<number, CustomerCourseItem>,
+        ),
+      )
+    : undefined;
+
   // 切換消費方式時重置支付欄位
   async function handleConsumptionTypeChange(ct: ConsumptionType) {
     setConsumptionType(ct);
@@ -232,7 +251,7 @@ export function POSCheckoutModal({
     if (consumptionType === 'course_deduction') {
       if (!selectedCourseId) { setStep2Error('請選擇要扣除的課程'); return; }
       if (!Number(sessionsDeducted) || Number(sessionsDeducted) < 1) { setStep2Error('扣除堂數至少為 1'); return; }
-      const course = customerCourses?.find((c) => String(c.id) === selectedCourseId);
+      const course = mergedCourses?.find((c) => String(c.serviceItem.id) === selectedCourseId);
       if (course && Number(sessionsDeducted) > course.remainingSessions) {
         setStep2Error(`此課程剩餘 ${course.remainingSessions} 堂，超過可扣堂數`); return;
       }
@@ -300,11 +319,11 @@ export function POSCheckoutModal({
     setSubmitError(undefined);
     setSubmitting(true);
     try {
-      // course_deduction 時，serviceItemId 從選中的 CustomerCourse 取得
-      const selectedCourse = customerCourses?.find((c) => String(c.id) === selectedCourseId);
+      // course_deduction 時，serviceItemId 從選中的合併課程取得；後端自動從最舊有餘堂的課程扣
+      const selectedMergedCourse = mergedCourses?.find((c) => String(c.serviceItem.id) === selectedCourseId);
       const serviceItemId =
         consumptionType === 'course_deduction'
-          ? (selectedCourse?.serviceItem.id ?? 0)
+          ? (selectedMergedCourse?.serviceItem.id ?? 0)
           : Number(selectedItemId);
 
       await createServiceRecord(storeId, {
@@ -318,10 +337,11 @@ export function POSCheckoutModal({
           ? splitPayments.map((p) => ({ method: p.method as PaymentMethod, amount: Number(p.amount) }))
           : undefined,
         sessionsDeducted: consumptionType === 'course_deduction' ? Number(sessionsDeducted) : undefined,
+        // 不傳 customerCourseId：後端依 serviceItemId 找最舊有剩餘堂數的課程
         customerSignatureUrl,
       });
 
-      const deductedCourse = customerCourses?.find((c) => String(c.id) === selectedCourseId);
+      const deductedCourse = selectedMergedCourse;
       const paymentSummary = splitPayments.length === 1
         ? `$${itemPrice.toLocaleString()} 元（${PAYMENT_METHOD_LABELS[splitPayments[0].method]}）`
         : splitPayments.map((p) => `${PAYMENT_METHOD_LABELS[p.method as PaymentMethod]} $${Number(p.amount).toLocaleString()}`).join(' ＋ ');
@@ -645,24 +665,24 @@ export function POSCheckoutModal({
                 )}
                 {consumptionType === 'course_deduction' && (
                   <div className="flex flex-col gap-3">
-                    {/* 顧客持有課程選擇器 */}
+                    {/* 顧客持有課程選擇器（按服務品項合併顯示） */}
                     <div className="flex flex-col gap-2">
                       <label className="text-kiosk-base font-bold text-slate-800">選擇要扣除的課程 *</label>
-                      {!customerCourses ? (
+                      {!mergedCourses ? (
                         <p className="text-kiosk-base text-slate-400">載入顧客課程中…</p>
-                      ) : customerCourses.length === 0 ? (
+                      ) : mergedCourses.length === 0 ? (
                         <p className="rounded-kiosk border border-amber-200 bg-amber-50 p-3 text-kiosk-base text-amber-700">
                           ⚠️ 此顧客名下目前沒有可用的課程堂數。
                         </p>
                       ) : (
                         <div className="flex flex-col gap-2">
-                          {customerCourses.map((course) => (
+                          {mergedCourses.map((course) => (
                             <button
-                              key={course.id}
+                              key={course.serviceItem.id}
                               type="button"
-                              onClick={() => setSelectedCourseId(String(course.id))}
+                              onClick={() => setSelectedCourseId(String(course.serviceItem.id))}
                               className={`rounded-kiosk border-2 p-3 text-left transition-all ${
-                                selectedCourseId === String(course.id)
+                                selectedCourseId === String(course.serviceItem.id)
                                   ? 'border-kiosk-primary bg-kiosk-primary/5'
                                   : 'border-slate-200 bg-white hover:border-slate-300'
                               }`}
@@ -689,7 +709,7 @@ export function POSCheckoutModal({
                         <label className="text-kiosk-base font-bold text-slate-800">本次扣除堂數 *</label>
                         <input
                           type="number" min={1}
-                          max={customerCourses?.find((c) => String(c.id) === selectedCourseId)?.remainingSessions ?? 99}
+                          max={mergedCourses?.find((c) => String(c.serviceItem.id) === selectedCourseId)?.remainingSessions ?? 99}
                           value={sessionsDeducted}
                           onChange={(e) => setSessionsDeducted(e.target.value)}
                           className="min-h-kiosk w-full rounded-kiosk border-4 border-slate-300 bg-white px-5 text-kiosk-base outline-none focus:border-kiosk-primary"
@@ -758,7 +778,7 @@ export function POSCheckoutModal({
               <p className="text-sm text-slate-500">本次消費</p>
               <p className="text-kiosk-lg font-bold text-slate-900">
                 {consumptionType === 'course_deduction'
-                  ? `${customerCourses?.find((c) => String(c.id) === selectedCourseId)?.serviceItem.name ?? '課程'} — 扣 ${sessionsDeducted} 堂`
+                  ? `${mergedCourses?.find((c) => String(c.serviceItem.id) === selectedCourseId)?.serviceItem.name ?? '課程'} — 扣 ${sessionsDeducted} 堂`
                   : `${selectedItem?.name}　$${itemPrice.toLocaleString()} 元`}
               </p>
               <p className="text-sm text-slate-500">顧客：{customerName}</p>

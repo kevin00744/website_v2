@@ -8,6 +8,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthenticatedUser } from '../auth/types';
 
 interface CreateUserDto {
+  username: string;
   name: string;
   email: string;
   password: string;
@@ -18,6 +19,7 @@ interface CreateUserDto {
 }
 
 interface UpdateUserDto {
+  username?: string;
   name?: string;
   email?: string;
   role?: Role;
@@ -32,12 +34,9 @@ interface ResetPasswordDto {
 }
 
 /**
- * 帳號管理是最高核心權限，完全對齊 Version 1：預設只有 system_admin/admin 能進來
- * （@Roles('system_admin') 加上 RolesGuard 的 isAdminRole 超集放行，admin 本來就會通過）。
- * dealer/manager/editor 連 GET 清單都看不到，不是只擋寫入——
- * 唯一例外是 GET/POST 這兩支故意額外覆寫加開 @Roles('dealer')：經銷商可以開立、查看「自己區域」
- * 的店長帳號（範圍由 UsersService 依 actor.region 過濾/檢查，不是在這裡擋），編輯/重設密碼/刪除
- * 仍然只開放給 admin/system_admin，經銷商不能動別人已經開好的帳號。
+ * 帳號管理路由：依角色分層開放。
+ * - GET / POST：system_admin, admin, general_agent, dealer, manager 均可進入（各自有資料範圍限制）
+ * - PATCH / DELETE / 重設密碼：admin 以上（system_admin 自動通過 RolesGuard 超集）
  */
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -45,24 +44,36 @@ interface ResetPasswordDto {
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
+  @Patch('me')
+  @Roles('staff', 'manager', 'accountant', 'dealer', 'general_agent', 'admin', 'editor')
+  updateMe(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Body() dto: { username?: string; password?: string; phone?: string },
+  ) {
+    return this.usersService.updateSelf(actor.id, dto);
+  }
+
   @Get()
-  @Roles('dealer')
+  @Roles('general_agent', 'dealer', 'manager')
   list(@CurrentUser() actor: AuthenticatedUser) {
     return this.usersService.listUsers(actor);
   }
 
   @Post()
-  @Roles('dealer')
+  @Roles('general_agent', 'dealer', 'manager')
   create(@CurrentUser() actor: AuthenticatedUser, @Body() dto: CreateUserDto) {
     return this.usersService.createUser(actor, dto);
   }
 
   @Patch(':id')
-  update(@CurrentUser() actor: AuthenticatedUser, @Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto) {
+  update(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateUserDto,
+  ) {
     return this.usersService.updateUser(actor, id, dto);
   }
 
-  /** 管理員強制幫其他員工重設密碼；自己改自己密碼走 PATCH /auth/change-password（需要驗證舊密碼） */
   @Patch(':id/password')
   resetPassword(
     @CurrentUser() actor: AuthenticatedUser,
@@ -72,7 +83,6 @@ export class UsersController {
     return this.usersService.resetPassword(actor, id, dto.newPassword);
   }
 
-  /** 軟刪除（deletedAt），不是真的砍掉資料列——保留歷史紀錄的關聯完整性（簽名/對話/庫存異動都還連著這個帳號） */
   @Delete(':id')
   delete(@CurrentUser() actor: AuthenticatedUser, @Param('id', ParseIntPipe) id: number) {
     return this.usersService.deleteUser(actor, id);

@@ -14,7 +14,7 @@ interface UserTableProps {
   readOnly?: boolean;
 }
 
-const REGION_LABEL: Record<string, string> = { north: '北部', central: '中部', south: '南部' };
+const REGION_LABEL: Record<string, string> = { A: '北部', B: '中部', C: '南部' };
 
 /** system_admin 帳號只能本人自己改，其他人（包含 admin）連編輯/重設密碼按鈕都不顯示，避免點下去得到 403 */
 function canManage(target: UserSummary, currentUserId: number): boolean {

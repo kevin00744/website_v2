@@ -11,9 +11,9 @@ import { StoreTable } from '@/components/admin/stores/StoreTable';
 import { NewStoreModal } from '@/components/admin/stores/NewStoreModal';
 import { EditStoreModal } from '@/components/admin/stores/EditStoreModal';
 
-/** 對齊 StoresController 的 @Roles('dealer','manager')：admin/system_admin/dealer 都能進這個頁面 */
+/** 對齊 StoresController 的 @Roles('dealer','general_agent')：admin/system_admin/dealer/general_agent 都能進這個頁面 */
 function canManageStores(role: AuthUser['role'] | undefined): boolean {
-  return role === 'admin' || role === 'system_admin' || role === 'dealer';
+  return role === 'admin' || role === 'system_admin' || role === 'dealer' || role === 'general_agent';
 }
 
 function isAdminRole(role: AuthUser['role'] | undefined): boolean {
@@ -110,7 +110,7 @@ export default function StoresPage() {
 
   // 啟用/停用目前後端只開放 admin/system_admin（見 stores.controller.ts），dealer 看得到分店但不能切換狀態
   const canToggleStatus = isAdminRole(user?.role);
-  const dealerLockedRegion = user?.role === 'dealer' ? user.region ?? undefined : undefined;
+  const dealerLockedRegion = (user?.role === 'dealer' || user?.role === 'general_agent') ? user.region ?? undefined : undefined;
 
   return (
     <div className="flex flex-col gap-6 pb-24 md:pb-0">

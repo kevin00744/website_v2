@@ -11,9 +11,9 @@ import { UserCardList } from '@/components/admin/users/UserCardList';
 import { NewUserModal } from '@/components/admin/users/NewUserModal';
 import { ResetPasswordModal } from '@/components/admin/users/ResetPasswordModal';
 
-/** 對齊後端 UsersController：admin/system_admin 看得到完整帳號管理，dealer 也能進來（範圍限縮在自己區域的店長帳號） */
+/** 對齊後端 UsersController：system_admin/admin/general_agent/dealer/manager 都可進入（各有資料範圍限制） */
 function canManageUsers(role: AuthUser['role'] | undefined): boolean {
-  return role === 'admin' || role === 'system_admin' || role === 'dealer';
+  return role === 'system_admin' || role === 'admin' || role === 'general_agent' || role === 'dealer' || role === 'manager';
 }
 
 /**
@@ -118,14 +118,12 @@ export default function UsersPage() {
     );
   }
 
-  const isDealer = user?.role === 'dealer';
-
   return (
     <div className="flex flex-col gap-6 pb-24 md:pb-0">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <h1 className="text-kiosk-xl font-bold text-slate-900">{isDealer ? '我負責區域的店長帳號' : '帳號管理'}</h1>
+        <h1 className="text-kiosk-xl font-bold text-slate-900">帳號管理</h1>
         <KioskButton onClick={openCreateModal} className="hidden md:inline-flex">
-          ＋ {isDealer ? '新增店長帳號' : '新增帳號'}
+          ＋ 新增帳號
         </KioskButton>
       </div>
 
@@ -150,7 +148,7 @@ export default function UsersPage() {
             togglingId={togglingId}
             onDelete={handleDelete}
             deletingId={deletingId}
-            readOnly={isDealer}
+            readOnly={false}
           />
           <UserCardList
             users={users}
@@ -161,7 +159,7 @@ export default function UsersPage() {
             togglingId={togglingId}
             onDelete={handleDelete}
             deletingId={deletingId}
-            readOnly={isDealer}
+            readOnly={false}
           />
         </>
       )}
@@ -178,7 +176,6 @@ export default function UsersPage() {
         onClose={() => setModalOpen(false)}
         onSaved={handleSaved}
         editingUser={editingUser}
-        lockedToManager={isDealer}
       />
 
       {resettingUser && (

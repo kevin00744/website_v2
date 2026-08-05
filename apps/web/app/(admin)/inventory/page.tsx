@@ -19,12 +19,12 @@ function canViewStockLevels(role: AuthUser['role'] | undefined): boolean {
 
 /** 對齊後端 InventoryController 的 restock-requests 系列路由：manager/dealer 額外開放，admin/system_admin 一律放行 */
 function canViewRestockRequests(role: AuthUser['role'] | undefined): boolean {
-  return role === 'admin' || role === 'system_admin' || role === 'manager' || role === 'dealer';
+  return role === 'admin' || role === 'system_admin' || role === 'manager' || role === 'dealer' || role === 'general_agent';
 }
 
-/** 只有 dealer/admin/system_admin 能把補貨請求標記完成；manager 自己提的請求要由經銷商確認，不能自己打勾 */
+/** 只有 dealer/general_agent/admin/system_admin 能把補貨請求標記完成；manager 自己提的請求要由經銷商確認，不能自己打勾 */
 function canCompleteRestockRequests(role: AuthUser['role'] | undefined): boolean {
-  return role === 'admin' || role === 'system_admin' || role === 'dealer';
+  return role === 'admin' || role === 'system_admin' || role === 'dealer' || role === 'general_agent';
 }
 
 /**
@@ -132,7 +132,7 @@ export default function InventoryPage() {
 
   const pendingRequests = requests.filter((request) => !request.isCompleted);
   const completedRequests = requests.filter((request) => request.isCompleted);
-  const isDealer = user?.role === 'dealer';
+  const isDealer = user?.role === 'dealer' || user?.role === 'general_agent';
 
   return (
     <div className="flex flex-col gap-8 pb-24 md:pb-0">

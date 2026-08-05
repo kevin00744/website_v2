@@ -55,6 +55,9 @@ export interface CustomerDetail {
   canDelete: boolean;
   isExosomeUser: boolean;
   exosomeConsentSignatureUrl: string | null;
+  hasExosomeConsent: boolean;
+  exosomeConsentSignedAt: string | null;
+  storeCredit: string;
 }
 
 interface SignaturePayloadInput {
@@ -116,6 +119,9 @@ const DETAIL_SELECT = {
   documentStaffSignedAt: true,
   isExosomeUser: true,
   exosomeConsentSignatureUrl: true,
+  hasExosomeConsent: true,
+  exosomeConsentSignedAt: true,
+  storeCredit: true,
   store: { select: { name: true, region: true } },
 } satisfies Prisma.CustomerSelect;
 
@@ -589,8 +595,53 @@ export class CustomersService {
         totalSessions: c.totalSessions,
         usedSessions: c.usedSessions,
         remainingSessions: c.totalSessions - c.usedSessions,
+        purchasePrice: c.purchasePrice ?? null,
         createdAt: c.createdAt.toISOString(),
       }));
+  }
+
+  /** 舊顧客補簽外泌體使用同意書（不覆蓋建檔日期與基本資料） */
+  async signExosomeConsent(
+    actor: AuthenticatedUser,
+    customerId: number,
+    input: { signatureUrl: string; signaturePoints?: unknown[]; notes?: string },
+  ) {
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: customerId, deletedAt: null },
+      select: { id: true, storeId: true, hasExosomeConsent: true, store: { select: { region: true } } },
+    });
+    if (!customer) throw new AppError('CUSTOMER_NOT_FOUND', '找不到此顧客', 404);
+    if (!canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
+      throw new AppError('PERMISSION_DENIED', '無權限存取此顧客資料', 403);
+    }
+    if (customer.hasExosomeConsent) {
+      throw new AppError('EXOSOME_CONSENT_ALREADY_SIGNED', '此顧客已完成外泌體同意書補簽', 409);
+    }
+
+    const now = new Date();
+    await this.prisma.$transaction([
+      this.prisma.exosomeConsentLog.create({
+        data: {
+          customerId,
+          signedAt: now,
+          signatureUrl: input.signatureUrl,
+          signaturePoints: input.signaturePoints as object[] | undefined,
+          operatorId: actor.id,
+          notes: input.notes,
+        },
+      }),
+      this.prisma.customer.update({
+        where: { id: customerId },
+        data: {
+          hasExosomeConsent: true,
+          exosomeConsentSignedAt: now,
+          isExosomeUser: true,
+          exosomeConsentSignatureUrl: input.signatureUrl,
+        },
+      }),
+    ]);
+
+    return { success: true, signedAt: now.toISOString() };
   }
 }
 
@@ -633,5 +684,8 @@ function toDetail(customer: DetailRow): CustomerDetail {
     canDelete: !disclaimerFullySigned,
     isExosomeUser: customer.isExosomeUser,
     exosomeConsentSignatureUrl: customer.exosomeConsentSignatureUrl,
+    hasExosomeConsent: customer.hasExosomeConsent,
+    exosomeConsentSignedAt: customer.exosomeConsentSignedAt?.toISOString() ?? null,
+    storeCredit: customer.storeCredit.toString(),
   };
 }

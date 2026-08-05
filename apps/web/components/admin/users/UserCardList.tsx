@@ -13,7 +13,7 @@ interface UserCardListProps {
   readOnly?: boolean;
 }
 
-const REGION_LABEL: Record<string, string> = { north: '北部', central: '中部', south: '南部' };
+const REGION_LABEL: Record<string, string> = { A: '北部', B: '中部', C: '南部' };
 
 function canManage(target: UserSummary, currentUserId: number): boolean {
   return target.role !== 'system_admin' || target.id === currentUserId;

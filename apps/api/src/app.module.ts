@@ -14,6 +14,7 @@ import { ServiceRecordModule } from './service-records/service-record.module';
 import { ServiceItemsModule } from './service-items/service-items.module';
 import { PromotionPlansModule } from './promotion-plans/promotion-plans.module';
 import { PettyCashModule } from './petty-cash/petty-cash.module';
+import { CustomerCoursesModule } from './customer-courses/customer-courses.module';
 
 @Module({
   imports: [
@@ -32,6 +33,7 @@ import { PettyCashModule } from './petty-cash/petty-cash.module';
     ServiceItemsModule,
     PromotionPlansModule,
     PettyCashModule,
+    CustomerCoursesModule,
   ],
 })
 export class AppModule {}

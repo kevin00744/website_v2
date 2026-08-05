@@ -37,14 +37,14 @@ export class StoresController {
    * dealer 不管帶不帶這個參數，一律只看得到自己區域的分店（見 service 裡的 regionFilter）。
    */
   @Get()
-  @Roles('dealer', 'manager')
+  @Roles('dealer', 'manager', 'general_agent')
   list(@CurrentUser() actor: AuthenticatedUser, @Query('all') all?: string) {
     return this.storesService.listStores(actor, all === 'true');
   }
 
   /** dealer 也能建店，但 service 層會強制檢查 region 必須等於自己負責的區域 */
   @Post()
-  @Roles('dealer')
+  @Roles('dealer', 'general_agent')
   create(@CurrentUser() actor: AuthenticatedUser, @Body() dto: CreateStoreDto) {
     return this.storesService.createStore(actor, dto);
   }
@@ -75,7 +75,7 @@ export class StoresController {
 
   /** POS 結帳「選擇服務人員」清單，回傳分店啟用中員工（含 staff / manager） */
   @Get(':id/staff')
-  @Roles('staff', 'manager', 'dealer')
+  @Roles('staff', 'manager', 'dealer', 'accountant')
   listStaff(@Param('id', ParseIntPipe) id: number) {
     return this.storesService.listStoreStaff(id);
   }
@@ -89,7 +89,7 @@ export class StoresController {
   createStaff(
     @CurrentUser() actor: AuthenticatedUser,
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: { name: string; email: string; password: string },
+    @Body() dto: { name: string; username: string; password: string },
   ) {
     return this.storesService.createStoreStaff(actor, id, dto);
   }
@@ -101,7 +101,7 @@ export class StoresController {
     @CurrentUser() actor: AuthenticatedUser,
     @Param('id', ParseIntPipe) id: number,
     @Param('staffId', ParseIntPipe) staffId: number,
-    @Body() dto: { name?: string; email?: string; isActive?: boolean },
+    @Body() dto: { name?: string; username?: string; password?: string; isActive?: boolean },
   ) {
     return this.storesService.updateStoreStaff(actor, id, staffId, dto);
   }

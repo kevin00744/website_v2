@@ -50,7 +50,7 @@ export class InventoryController {
 
   /** 補貨請求要選「補哪個商品」用的商品目錄，manager/dealer 都要查得到 */
   @Get('products')
-  @Roles('manager', 'dealer')
+  @Roles('manager', 'dealer', 'general_agent')
   listProducts() {
     return this.inventoryService.listProducts();
   }
@@ -64,7 +64,7 @@ export class InventoryController {
 
   /** manager 看自己分店；dealer 看自己區域；admin/system_admin 看全部。?isCompleted=true/false 篩選待處理/已完成 */
   @Get('restock-requests')
-  @Roles('manager', 'dealer')
+  @Roles('manager', 'dealer', 'general_agent')
   listRestockRequests(@CurrentUser() actor: AuthenticatedUser, @Query('isCompleted') isCompleted?: string) {
     const parsed = isCompleted === undefined ? undefined : isCompleted === 'true';
     return this.inventoryService.listRestockRequests(actor, parsed);
@@ -72,7 +72,7 @@ export class InventoryController {
 
   /** 經銷商補完貨後打勾標記完成；manager 自己不能標記，要由經銷商確認 */
   @Patch('restock-requests/:id/complete')
-  @Roles('dealer')
+  @Roles('dealer', 'general_agent')
   completeRestockRequest(@CurrentUser() actor: AuthenticatedUser, @Param('id', ParseIntPipe) id: number) {
     return this.inventoryService.completeRestockRequest(actor, id);
   }

@@ -1,226 +1,180 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import type { UserSummary } from '@website-v2/shared-types';
 import { ApiError } from '@/lib/api-client';
-import { getAuthUser } from '@/lib/auth';
-import { listStoreStaff, createStoreStaff, updateStoreStaff, deleteStoreStaff, type StoreStaffMember } from '@/lib/stores-api';
+import { getAuthUser, type AuthUser } from '@/lib/auth';
+import { deleteUser, listUsers, setUserActive } from '@/lib/users-api';
 import { KioskButton } from '@/components/admin/kiosk/KioskButton';
-import { KioskInput } from '@/components/admin/kiosk/KioskInput';
+import { UserTable } from '@/components/admin/users/UserTable';
+import { UserCardList } from '@/components/admin/users/UserCardList';
+import { NewUserModal } from '@/components/admin/users/NewUserModal';
+import { ResetPasswordModal } from '@/components/admin/users/ResetPasswordModal';
+
+function canManageStaff(role: AuthUser['role'] | undefined): boolean {
+  return role === 'manager' || role === 'admin' || role === 'system_admin';
+}
 
 export default function StoreStaffPage() {
-  const [storeId, setStoreId] = useState<number | null>(null);
-  const [staff, setStaff] = useState<StoreStaffMember[]>();
+  const [user, setUser] = useState<AuthUser>();
+  const [checkedAuth, setCheckedAuth] = useState(false);
+  const [users, setUsers] = useState<UserSummary[]>([]);
+  const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string>();
-  const [showForm, setShowForm] = useState(false);
-  // 編輯狀態
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editName, setEditName] = useState('');
-  const [editEmail, setEditEmail] = useState('');
-  const [editError, setEditError] = useState<string>();
-  const [editSubmitting, setEditSubmitting] = useState(false);
-
-  // Form
-  const [formName, setFormName] = useState('');
-  const [formEmail, setFormEmail] = useState('');
-  const [formPassword, setFormPassword] = useState('');
-  const [formError, setFormError] = useState<string>();
-  const [submitting, setSubmitting] = useState(false);
+  const [togglingId, setTogglingId] = useState<number>();
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<UserSummary>();
+  const [resettingUser, setResettingUser] = useState<UserSummary>();
+  const [deletingId, setDeletingId] = useState<number>();
 
   useEffect(() => {
-    const user = getAuthUser();
-    if (!user?.storeId) return;
-    setStoreId(user.storeId);
-    void loadStaff(user.storeId);
+    setUser(getAuthUser());
+    setCheckedAuth(true);
   }, []);
 
-  async function loadStaff(sid: number) {
+  const loadUsers = useCallback(async () => {
+    setLoading(true);
     setLoadError(undefined);
     try {
-      setStaff(await listStoreStaff(sid));
-    } catch (err) {
-      setLoadError(err instanceof ApiError ? err.message : '載入失敗，請稍後再試');
-    }
-  }
-
-  function resetForm() {
-    setFormName('');
-    setFormEmail('');
-    setFormPassword('');
-    setFormError(undefined);
-    setShowForm(false);
-  }
-
-  function openEdit(s: StoreStaffMember) {
-    setEditingId(s.id);
-    setEditName(s.name);
-    setEditEmail(s.email);
-    setEditError(undefined);
-  }
-
-  async function handleUpdate() {
-    if (!storeId || !editingId) return;
-    if (!editName.trim()) { setEditError('請輸入姓名'); return; }
-    setEditSubmitting(true);
-    setEditError(undefined);
-    try {
-      const updated = await updateStoreStaff(storeId, editingId, { name: editName.trim(), email: editEmail.trim() || undefined });
-      setStaff((prev) => prev?.map((s) => (s.id === updated.id ? { ...s, name: updated.name, email: updated.email } : s)));
-      setEditingId(null);
-    } catch (err) {
-      setEditError(err instanceof ApiError ? err.message : '更新失敗');
+      const result = await listUsers();
+      setUsers(result);
+    } catch (error) {
+      setLoadError(error instanceof ApiError ? error.message : '系統出了一點問題，請稍後再試');
     } finally {
-      setEditSubmitting(false);
+      setLoading(false);
     }
-  }
+  }, []);
 
-  async function handleDelete(s: StoreStaffMember) {
-    if (!storeId) return;
-    if (!window.confirm(`確定要刪除員工「${s.name}」嗎？`)) return;
-    try {
-      await deleteStoreStaff(storeId, s.id);
-      setStaff((prev) => prev?.filter((x) => x.id !== s.id));
-    } catch (err) {
-      alert(err instanceof ApiError ? err.message : '刪除失敗');
+  useEffect(() => {
+    if (checkedAuth && canManageStaff(user?.role)) {
+      void loadUsers();
     }
-  }
+  }, [checkedAuth, user, loadUsers]);
 
-  async function handleCreate() {
-    if (!storeId) return;
-    setFormError(undefined);
-    if (!formName.trim()) { setFormError('請輸入姓名'); return; }
-    if (!formEmail.trim() || !formEmail.includes('@')) { setFormError('請輸入正確的 Email'); return; }
-    if (formPassword.length < 8) { setFormError('密碼至少 8 個字元'); return; }
-
-    setSubmitting(true);
+  async function handleToggleActive(target: UserSummary) {
+    setTogglingId(target.id);
     try {
-      await createStoreStaff(storeId, {
-        name: formName.trim(),
-        email: formEmail.trim().toLowerCase(),
-        password: formPassword,
-      });
-      resetForm();
-      void loadStaff(storeId);
-    } catch (err) {
-      setFormError(err instanceof ApiError ? err.message : '新增失敗，請稍後再試');
+      const updated = await setUserActive(target.id, !target.isActive);
+      setUsers((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+    } catch (error) {
+      setLoadError(error instanceof ApiError ? error.message : '更新帳號狀態失敗，請稍後再試');
     } finally {
-      setSubmitting(false);
+      setTogglingId(undefined);
     }
   }
 
-  if (!storeId) {
-    return <p className="py-16 text-center text-kiosk-base text-slate-500">您的帳號未指定所屬分店。</p>;
+  async function handleDelete(target: UserSummary) {
+    if (!window.confirm(`確定要刪除帳號「${target.name}」嗎？這個動作無法復原。`)) return;
+    setDeletingId(target.id);
+    try {
+      await deleteUser(target.id);
+      setUsers((prev) => prev.filter((item) => item.id !== target.id));
+    } catch (error) {
+      setLoadError(error instanceof ApiError ? error.message : '刪除帳號失敗，請稍後再試');
+    } finally {
+      setDeletingId(undefined);
+    }
   }
 
-  const ROLE_LABEL: Record<string, string> = {
-    manager: '店長',
-    staff: '服務人員',
-  };
+  function handleSaved(saved: UserSummary) {
+    setUsers((prev) => {
+      const exists = prev.some((item) => item.id === saved.id);
+      return exists ? prev.map((item) => (item.id === saved.id ? saved : item)) : [...prev, saved];
+    });
+  }
+
+  function openCreateModal() {
+    setEditingUser(undefined);
+    setModalOpen(true);
+  }
+
+  function openEditModal(target: UserSummary) {
+    setEditingUser(target);
+    setModalOpen(true);
+  }
+
+  if (!checkedAuth) {
+    return <p className="text-kiosk-base text-slate-500">載入中…</p>;
+  }
+
+  if (!canManageStaff(user?.role)) {
+    return (
+      <div className="flex flex-col items-center gap-4 rounded-kiosk border-2 border-amber-300 bg-amber-50 p-8 text-center">
+        <p className="text-kiosk-lg font-bold text-slate-900">這個功能目前的帳號沒有權限使用</p>
+        <p className="text-kiosk-base text-slate-600">員工帳號管理只開放給店長及管理員</p>
+        <KioskButton variant="primary" onClick={() => (window.location.href = '/customers')}>
+          回到顧客資料
+        </KioskButton>
+      </div>
+    );
+  }
 
   return (
-    <div className="mx-auto max-w-2xl">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-kiosk-xl font-bold text-slate-900">分店員工管理</h1>
-        {!showForm && (
-          <KioskButton variant="primary" onClick={() => setShowForm(true)}>
-            ＋ 新增員工
-          </KioskButton>
-        )}
+    <div className="flex flex-col gap-6 pb-24 md:pb-0">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <h1 className="text-kiosk-xl font-bold text-slate-900">員工帳號管理</h1>
+        <KioskButton onClick={openCreateModal} className="hidden md:inline-flex">
+          ＋ 新增員工帳號
+        </KioskButton>
       </div>
 
-      {/* 新增員工表單 */}
-      {showForm && (
-        <div className="mb-6 rounded-kiosk border-2 border-kiosk-primary/30 bg-white p-6">
-          <h2 className="mb-4 text-kiosk-lg font-bold text-slate-800">新增服務人員帳號</h2>
-          <p className="mb-4 text-sm text-slate-500">
-            此帳號類型固定為「服務人員」，可用於登入後台、打卡及服務紀錄。
-          </p>
-          <div className="flex flex-col gap-4">
-            <KioskInput
-              label="姓名"
-              required
-              placeholder="員工真實姓名"
-              value={formName}
-              onChange={(e) => setFormName(e.target.value)}
-            />
-            <KioskInput
-              label="Email（登入帳號）"
-              required
-              type="email"
-              placeholder="staff@example.com"
-              value={formEmail}
-              onChange={(e) => setFormEmail(e.target.value)}
-            />
-            <KioskInput
-              label="初始密碼"
-              required
-              type="password"
-              placeholder="至少 8 個字元"
-              value={formPassword}
-              onChange={(e) => setFormPassword(e.target.value)}
-            />
-            {formError && (
-              <p className="text-kiosk-base font-semibold text-kiosk-danger">⚠️ {formError}</p>
-            )}
-            <div className="flex gap-3 pt-1">
-              <KioskButton variant="ghost" onClick={resetForm} disabled={submitting} fullWidth>
-                取消
-              </KioskButton>
-              <KioskButton variant="primary" onClick={() => void handleCreate()} disabled={submitting} fullWidth>
-                {submitting ? '建立中…' : '建立帳號'}
-              </KioskButton>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 員工列表 */}
-      {loadError && <p className="text-kiosk-base font-semibold text-kiosk-danger">⚠️ {loadError}</p>}
-      {!staff && !loadError && <p className="text-kiosk-base text-slate-400">載入中…</p>}
-      {staff && staff.length === 0 && (
-        <p className="rounded-kiosk bg-slate-50 p-6 text-center text-kiosk-base text-slate-500">
-          目前分店尚無員工帳號，請點「＋ 新增員工」建立。
+      {loadError && (
+        <p className="text-kiosk-base font-semibold text-kiosk-danger" role="alert">
+          ⚠️ {loadError}
         </p>
       )}
-      {staff && staff.map((s) => (
-        <div key={s.id} className="mb-3 rounded-kiosk border border-slate-200 bg-white">
-          <div className="flex items-center justify-between px-5 py-4">
-            <div>
-              <p className="text-kiosk-base font-semibold text-slate-900">{s.name}</p>
-              <p className="text-sm text-slate-500">{s.email}</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className={`rounded-full px-3 py-1 text-sm font-semibold ${s.isActive ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
-                {s.isActive ? '啟用' : '停用'}
-              </span>
-              {s.role === 'staff' && (
-                <>
-                  <KioskButton variant="secondary" onClick={() => openEdit(s)}>編輯</KioskButton>
-                  <KioskButton variant="danger" onClick={() => void handleDelete(s)}>刪除</KioskButton>
-                </>
-              )}
-            </div>
-          </div>
-          {editingId === s.id && (
-            <div className="border-t border-slate-100 bg-slate-50 p-4">
-              <div className="flex flex-col gap-3">
-                <KioskInput label="姓名" required value={editName} onChange={(e) => setEditName(e.target.value)} />
-                <KioskInput label="Email" type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} />
-                {editError && <p className="text-kiosk-base font-semibold text-kiosk-danger">⚠️ {editError}</p>}
-                <div className="flex gap-2">
-                  <KioskButton variant="ghost" onClick={() => setEditingId(null)} disabled={editSubmitting} fullWidth>取消</KioskButton>
-                  <KioskButton variant="primary" onClick={() => void handleUpdate()} disabled={editSubmitting} fullWidth>
-                    {editSubmitting ? '儲存中…' : '儲存'}
-                  </KioskButton>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      ))}
+      {loading && <p className="text-kiosk-base text-slate-500">載入中…</p>}
+      {!loading && !loadError && users.length === 0 && (
+        <p className="text-kiosk-base text-slate-500">目前還沒有任何員工帳號</p>
+      )}
 
-      <p className="mt-4 text-sm text-slate-400">
-        ※ 停用員工帳號請至「帳號管理」頁面操作。
-      </p>
+      {user && (
+        <>
+          <UserTable
+            users={users}
+            currentUserId={user.id}
+            onEdit={openEditModal}
+            onResetPassword={setResettingUser}
+            onToggleActive={handleToggleActive}
+            togglingId={togglingId}
+            onDelete={handleDelete}
+            deletingId={deletingId}
+            readOnly={false}
+          />
+          <UserCardList
+            users={users}
+            currentUserId={user.id}
+            onEdit={openEditModal}
+            onResetPassword={setResettingUser}
+            onToggleActive={handleToggleActive}
+            togglingId={togglingId}
+            onDelete={handleDelete}
+            deletingId={deletingId}
+            readOnly={false}
+          />
+        </>
+      )}
+
+      <div className="fixed inset-x-0 bottom-0 border-t border-slate-200 bg-white p-4 md:hidden">
+        <KioskButton fullWidth onClick={openCreateModal}>
+          ＋ 新增員工帳號
+        </KioskButton>
+      </div>
+
+      <NewUserModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        onSaved={handleSaved}
+        editingUser={editingUser}
+      />
+
+      {resettingUser && (
+        <ResetPasswordModal
+          user={resettingUser}
+          onClose={() => setResettingUser(undefined)}
+          onDone={() => setResettingUser(undefined)}
+        />
+      )}
     </div>
   );
 }

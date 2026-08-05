@@ -28,7 +28,7 @@ interface CreateServiceRecordDto {
  */
 @Controller('stores/:storeId/service-records')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('staff', 'manager', 'dealer')
+@Roles('staff', 'manager', 'dealer', 'general_agent')
 export class ServiceRecordController {
   constructor(private readonly serviceRecordService: ServiceRecordService) {}
 
@@ -54,7 +54,7 @@ export class ServiceRecordController {
 
   /** 員工業績帳目（限 manager / admin，可指定日期範圍） */
   @Get('by-staff/:staffId')
-  @Roles('manager')
+  @Roles('manager', 'accountant')
   listByStaff(
     @CurrentUser() actor: AuthenticatedUser,
     @Param('storeId', ParseIntPipe) storeId: number,
@@ -73,5 +73,25 @@ export class ServiceRecordController {
     @Param('storeId', ParseIntPipe) storeId: number,
   ) {
     return this.serviceRecordService.listDaily(actor, storeId);
+  }
+
+  /** 顧客課程核銷歷程（含還原狀態） */
+  @Get('course-deductions/:customerId')
+  @Roles('staff', 'manager', 'accountant')
+  listCourseDeductions(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('customerId', ParseIntPipe) customerId: number,
+  ) {
+    return this.serviceRecordService.listCourseDeductionsForCustomer(actor, customerId);
+  }
+
+  /** 還原課程核銷（店長/系統管理員專屬） */
+  @Post(':recordId/rollback')
+  @Roles('manager', 'system_admin')
+  rollback(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('recordId', ParseIntPipe) recordId: number,
+  ) {
+    return this.serviceRecordService.rollback(actor, recordId);
   }
 }

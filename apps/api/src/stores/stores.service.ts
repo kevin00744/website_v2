@@ -6,11 +6,11 @@ import { AppError } from '../common/errors/app-error';
 import { isAdminRole } from '../auth/role-access.util';
 import type { AuthenticatedUser } from '../auth/types';
 
-/** 對齊 Version 1：code = 區域字母 + 該區域內的 2 位數流水序號（北 N／中 C／南 S） */
+/** 分店代碼前綴：A=北部, B=中部, C=南部 */
 const REGION_PREFIX: Record<Region, string> = {
-  north: 'N',
-  central: 'C',
-  south: 'S',
+  A: 'A',
+  B: 'B',
+  C: 'C',
 };
 
 interface CreateStoreInput {
@@ -45,13 +45,13 @@ export class StoresService {
    * 這是查詢層級的第二道防線，跟 createStore() 的寫入防線是同一套規則（actor.region 不符就看不到）。
    */
   async listStores(actor: AuthenticatedUser, includeInactive = false): Promise<StoreSummary[]> {
-    if (actor.role === 'dealer' && !actor.region) {
+    if ((actor.role === 'dealer' || actor.role === 'general_agent') && !actor.region) {
       return [];
     }
 
     const allowInactive = includeInactive && isAdminRole(actor.role);
     // 上面已經擋掉 dealer 沒有 region 的情況，這裡的 actor.region 對 dealer 來說保證不是 null
-    const regionFilter = actor.role === 'dealer' ? { region: actor.region as Region } : {};
+    const regionFilter = (actor.role === 'dealer' || actor.role === 'general_agent') ? { region: actor.region as Region } : {};
     const stores = await this.prisma.store.findMany({
       where: { deletedAt: null, ...regionFilter, ...(allowInactive ? {} : { isActive: true }) },
       orderBy: [{ region: 'asc' }, { regionSequence: 'asc' }],
@@ -79,7 +79,7 @@ export class StoresService {
       throw new AppError('STORE_NAME_REQUIRED', 'name is required');
     }
 
-    if (actor.role === 'dealer' && input.region !== actor.region) {
+    if ((actor.role === 'dealer' || actor.role === 'general_agent') && input.region !== actor.region) {
       throw new AppError('STORE_REGION_UNAUTHORIZED', 'dealer can only create stores in their own region', 403);
     }
 
@@ -181,7 +181,7 @@ export class StoresService {
   async createStoreStaff(
     actor: AuthenticatedUser,
     storeId: number,
-    input: { name: string; email: string; password: string },
+    input: { name: string; username: string; password: string },
   ) {
     if (!isAdminRole(actor.role) && actor.role !== 'manager') {
       throw new AppError('PERMISSION_DENIED', '只有店長或管理員可以建立員工帳號', 403);
@@ -193,33 +193,39 @@ export class StoresService {
     const store = await this.prisma.store.findFirst({ where: { id: storeId, deletedAt: null } });
     if (!store) throw new AppError('STORE_NOT_FOUND', '找不到此分店', 404);
 
-    const existing = await this.prisma.user.findFirst({ where: { email: input.email.trim(), deletedAt: null } });
-    if (existing) throw new AppError('USER_EMAIL_EXISTS', '這個 Email 已被其他帳號使用', 409);
+    const usernameTrimmed = input.username.trim().toLowerCase();
+    const existingUsername = await this.prisma.user.findFirst({ where: { username: usernameTrimmed, deletedAt: null } });
+    if (existingUsername) throw new AppError('USER_USERNAME_EXISTS', '這個帳號名稱已被使用', 409);
 
     if (!input.password || input.password.length < 8) {
       throw new AppError('USER_PASSWORD_TOO_SHORT', '密碼至少要 8 個字元', 400);
     }
 
     const passwordHash = await bcrypt.hash(input.password, 10);
+    // email 欄位為 DB NOT NULL，用 placeholder（不對外暴露）
+    const placeholderEmail = `${usernameTrimmed}@store.internal`;
     const user = await this.prisma.user.create({
       data: {
+        username: usernameTrimmed,
         name: input.name.trim(),
-        email: input.email.trim().toLowerCase(),
+        email: placeholderEmail,
         password: passwordHash,
-        role: 'staff',        // 強制鎖定為 staff，任何呼叫端都無法繞過
+        role: 'staff',
         storeId,
+        parentId: actor.id,
+        dealerId: (actor.role === 'dealer' || actor.role === 'general_agent') ? actor.id : (actor.dealerId ?? null),
       },
-      select: { id: true, name: true, email: true, role: true, storeId: true, isActive: true },
+      select: { id: true, username: true, name: true, role: true, storeId: true, isActive: true },
     });
     return user;
   }
 
-  /** manager 更新自己分店的 staff 資訊（姓名、Email、isActive） */
+  /** manager 更新自己分店的 staff 資訊（姓名、帳號、密碼、isActive） */
   async updateStoreStaff(
     actor: AuthenticatedUser,
     storeId: number,
     staffId: number,
-    input: { name?: string; email?: string; isActive?: boolean },
+    input: { name?: string; username?: string; password?: string; isActive?: boolean },
   ) {
     if (!isAdminRole(actor.role) && actor.storeId !== storeId) {
       throw new AppError('PERMISSION_DENIED', '只能管理自己所屬分店的員工', 403);
@@ -228,18 +234,24 @@ export class StoresService {
       where: { id: staffId, storeId, role: 'staff', deletedAt: null },
     });
     if (!staff) throw new AppError('USER_NOT_FOUND', '找不到此員工', 404);
-    if (input.email && input.email !== staff.email) {
-      const existing = await this.prisma.user.findFirst({ where: { email: input.email, deletedAt: null } });
-      if (existing) throw new AppError('USER_EMAIL_EXISTS', '這個 Email 已被其他帳號使用', 409);
+    if (input.username) {
+      const usernameTrimmed = input.username.trim().toLowerCase();
+      const existing = await this.prisma.user.findFirst({ where: { username: usernameTrimmed, NOT: { id: staffId }, deletedAt: null } });
+      if (existing) throw new AppError('USER_USERNAME_EXISTS', '這個帳號名稱已被使用', 409);
     }
+    if (input.password !== undefined && input.password.length < 8) {
+      throw new AppError('USER_PASSWORD_TOO_SHORT', '密碼至少要 8 個字元', 400);
+    }
+    const passwordHash = input.password ? await bcrypt.hash(input.password, 10) : undefined;
     return this.prisma.user.update({
       where: { id: staffId },
       data: {
         ...(input.name?.trim() ? { name: input.name.trim() } : {}),
-        ...(input.email?.trim() ? { email: input.email.trim().toLowerCase() } : {}),
+        ...(input.username?.trim() ? { username: input.username.trim().toLowerCase() } : {}),
+        ...(passwordHash ? { password: passwordHash } : {}),
         ...(input.isActive !== undefined ? { isActive: input.isActive } : {}),
       },
-      select: { id: true, name: true, email: true, role: true, storeId: true, isActive: true },
+      select: { id: true, username: true, name: true, role: true, storeId: true, isActive: true },
     });
   }
 
@@ -258,11 +270,11 @@ export class StoresService {
     });
   }
 
-  /** POS 結帳「選擇服務人員」用：回傳該分店所有啟用中的員工帳號 */
+  /** 員工帳號管理 + POS 結帳「選擇服務人員」用：回傳該分店所有員工帳號 */
   async listStoreStaff(storeId: number) {
     return this.prisma.user.findMany({
-      where: { storeId, isActive: true, deletedAt: null },
-      select: { id: true, name: true, role: true },
+      where: { storeId, deletedAt: null },
+      select: { id: true, username: true, name: true, role: true, isActive: true },
       orderBy: { name: 'asc' },
     });
   }

@@ -15,7 +15,7 @@ interface CreateServiceItemDto {
 
 @Controller('service-items')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('staff', 'manager', 'dealer')
+@Roles('staff', 'manager', 'dealer', 'general_agent')
 export class ServiceItemsController {
   constructor(private readonly serviceItemsService: ServiceItemsService) {}
 

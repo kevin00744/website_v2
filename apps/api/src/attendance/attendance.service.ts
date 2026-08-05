@@ -51,7 +51,7 @@ export class AttendanceService {
   /** 查詢自己的打卡紀錄（分頁，最近 30 筆）。staff 只能看自己；manager/admin 可看整個分店。 */
   async listRecords(actor: AuthenticatedUser, targetUserId?: number) {
     const storeId = this.requireStoreId(actor);
-    const isManagerOrAbove = actor.role === 'manager' || actor.role === 'dealer' || actor.role === 'system_admin' || actor.role === 'admin';
+    const isManagerOrAbove = actor.role === 'manager' || actor.role === 'dealer' || actor.role === 'general_agent' || actor.role === 'system_admin' || actor.role === 'admin';
 
     // staff 只能看自己
     const userId = (!isManagerOrAbove || !targetUserId) ? actor.id : targetUserId;
@@ -96,7 +96,7 @@ export class AttendanceService {
   async monthlySummary(actor: AuthenticatedUser, storeId: number, month?: string) {
     const storeId_ = actor.storeId ?? storeId;
     // manager 只能看自己的分店
-    if (actor.role === 'manager' && actor.storeId !== storeId) {
+    if ((actor.role === 'manager' || actor.role === 'accountant') && actor.storeId !== storeId) {
       throw new AppError('PERMISSION_DENIED', '只能查看自己所屬分店的考勤', 403);
     }
 

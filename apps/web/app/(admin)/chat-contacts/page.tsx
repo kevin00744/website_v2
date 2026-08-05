@@ -13,7 +13,7 @@ function canManageChatContacts(role: AuthUser['role'] | undefined): boolean {
   return role === 'admin' || role === 'system_admin';
 }
 
-const REGION_LABEL: Record<string, string> = { north: '北區', central: '中區', south: '南區' };
+const REGION_LABEL: Record<string, string> = { A: '北區', B: '中區', C: '南區' };
 
 /**
  * 只有經銷商/店長帳號才有「可聊天清單」需要調整（admin/system_admin 預設就看得到全部，

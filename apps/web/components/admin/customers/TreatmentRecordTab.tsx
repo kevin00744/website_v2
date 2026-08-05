@@ -9,6 +9,7 @@ import {
   type ServiceRecordResult,
   type ConsumptionType,
 } from '@/lib/service-records-api';
+import { rollbackServiceRecord } from '@/lib/customers-api';
 import { getAuthUser, type AuthUser } from '@/lib/auth';
 import { KioskButton } from '../kiosk/KioskButton';
 import { PhotoLightbox } from './PhotoLightbox';
@@ -20,6 +21,10 @@ interface TreatmentRecordTabProps {
 
 function canDelete(role: AuthUser['role'] | undefined) {
   return role === 'admin' || role === 'system_admin';
+}
+
+function canRollback(role: AuthUser['role'] | undefined) {
+  return role === 'manager' || role === 'admin' || role === 'system_admin';
 }
 
 const CONSUMPTION_LABEL: Record<ConsumptionType, string> = {
@@ -40,6 +45,7 @@ export function TreatmentRecordTab({ customerId, storeId }: TreatmentRecordTabPr
   const [lightboxPhotos, setLightboxPhotos] = useState<string[] | null>(null);
   const [user, setUser] = useState<AuthUser>();
   const deletingRef = useRef<number | null>(null);
+  const [rollingBack, setRollingBack] = useState<number | null>(null);
 
   useEffect(() => {
     setUser(getAuthUser());
@@ -62,6 +68,19 @@ export function TreatmentRecordTab({ customerId, storeId }: TreatmentRecordTabPr
   useEffect(() => {
     void load();
   }, [load]);
+
+  async function handleRollback(recordId: number) {
+    if (!window.confirm('確定要還原這筆課程核銷？堂數將會歸還給顧客。')) return;
+    setRollingBack(recordId);
+    try {
+      await rollbackServiceRecord(storeId, recordId);
+      await load();
+    } catch (err) {
+      alert(err instanceof ApiError ? err.message : '還原失敗，請稍後再試');
+    } finally {
+      setRollingBack(null);
+    }
+  }
 
   async function handleDelete(recordId: number) {
     if (!window.confirm('確定要刪除這筆療程紀錄嗎？')) return;
@@ -105,11 +124,14 @@ export function TreatmentRecordTab({ customerId, storeId }: TreatmentRecordTabPr
                   <th className="px-3 py-2 text-right">金額 / 堂數</th>
                   <th className="px-3 py-2 text-left">服務人員</th>
                   <th className="px-3 py-2 text-center">簽名</th>
+                  {canRollback(user?.role) && <th className="px-3 py-2 text-center">操作</th>}
                 </tr>
               </thead>
               <tbody>
-                {serviceRecords.map((r) => (
-                  <tr key={r.id} className="border-t border-slate-100 hover:bg-slate-50">
+                {serviceRecords.map((r) => {
+                  const isRolledBack = (r as { isRolledBack?: boolean }).isRolledBack;
+                  return (
+                  <tr key={r.id} className={`border-t border-slate-100 hover:bg-slate-50 ${isRolledBack ? 'opacity-50' : ''}`}>
                     <td className="px-3 py-2 font-mono text-xs text-slate-500">
                       {new Date(r.createdAt).toLocaleString('zh-TW', {
                         month: '2-digit', day: '2-digit',
@@ -118,6 +140,7 @@ export function TreatmentRecordTab({ customerId, storeId }: TreatmentRecordTabPr
                     </td>
                     <td className="px-3 py-2 font-semibold text-slate-800">
                       {(r.serviceItem as { name: string }).name}
+                      {isRolledBack && <span className="ml-1 text-xs text-slate-400">（已還原）</span>}
                     </td>
                     <td className="px-3 py-2 text-center">
                       <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${CONSUMPTION_COLOR[r.consumptionType]}`}>
@@ -135,8 +158,23 @@ export function TreatmentRecordTab({ customerId, storeId }: TreatmentRecordTabPr
                         ? <span className="text-kiosk-success font-bold">✓</span>
                         : <span className="text-slate-300">—</span>}
                     </td>
+                    {canRollback(user?.role) && (
+                      <td className="px-3 py-2 text-center">
+                        {r.consumptionType === 'course_deduction' && !isRolledBack ? (
+                          <button
+                            type="button"
+                            disabled={rollingBack === r.id}
+                            onClick={() => void handleRollback(r.id)}
+                            className="rounded px-2 py-1 text-xs font-semibold text-amber-700 border border-amber-300 hover:bg-amber-50 disabled:opacity-50"
+                          >
+                            {rollingBack === r.id ? '還原中…' : '還原扣除'}
+                          </button>
+                        ) : <span className="text-slate-300">—</span>}
+                      </td>
+                    )}
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

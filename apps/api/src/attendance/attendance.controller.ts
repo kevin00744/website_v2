@@ -18,7 +18,7 @@ export class AttendanceController {
   /** 上班打卡 — 所有有 storeId 的角色皆可呼叫 */
   @Post('check-in')
   @UseGuards(RolesGuard)
-  @Roles('staff', 'manager', 'dealer')
+  @Roles('staff', 'manager', 'dealer', 'general_agent')
   checkIn(@CurrentUser() actor: AuthenticatedUser) {
     return this.attendanceService.checkIn(actor);
   }
@@ -26,7 +26,7 @@ export class AttendanceController {
   /** 下班打卡 */
   @Post('check-out')
   @UseGuards(RolesGuard)
-  @Roles('staff', 'manager', 'dealer')
+  @Roles('staff', 'manager', 'dealer', 'general_agent')
   checkOut(@CurrentUser() actor: AuthenticatedUser) {
     return this.attendanceService.checkOut(actor);
   }
@@ -38,7 +38,7 @@ export class AttendanceController {
    */
   @Get('records')
   @UseGuards(RolesGuard)
-  @Roles('staff', 'manager', 'dealer')
+  @Roles('staff', 'manager', 'dealer', 'general_agent')
   listRecords(@CurrentUser() actor: AuthenticatedUser, @Query('userId') userId?: string) {
     return this.attendanceService.listRecords(actor, userId ? Number(userId) : undefined);
   }
@@ -54,10 +54,10 @@ export class AttendanceController {
   /** 分店員工本月考勤摘要（天數 + 工時），限 manager/admin */
   @Get('stores/:storeId/monthly-summary')
   @UseGuards(RolesGuard)
-  @Roles('manager')
+  @Roles('manager', 'accountant')
   monthlySummary(
     @CurrentUser() actor: AuthenticatedUser,
-    @Query('storeId', ParseIntPipe) storeId: number,
+    @Param('storeId', ParseIntPipe) storeId: number,
     @Query('month') month?: string,
   ) {
     return this.attendanceService.monthlySummary(actor, storeId, month);

@@ -93,7 +93,7 @@ async function main() {
     create: {
       code: 'DEFAULT',
       name: '預設門店',
-      region: 'north',
+      region: 'A',
       regionSequence: 1,
     },
   });
@@ -102,6 +102,7 @@ async function main() {
     where: { email: 'system@website-v2.local' },
     update: { password: passwordHash },
     create: {
+      username: 'system_admin',
       name: '系統管理員',
       email: 'system@website-v2.local',
       password: passwordHash,
@@ -113,6 +114,7 @@ async function main() {
     where: { email: 'admin@website-v2.local' },
     update: { password: passwordHash },
     create: {
+      username: 'admin',
       name: '管理員',
       email: 'admin@website-v2.local',
       password: passwordHash,
@@ -124,11 +126,12 @@ async function main() {
     where: { email: 'dealer-north@website-v2.local' },
     update: { password: passwordHash },
     create: {
-      name: '北區經銷商',
+      username: 'dealer_north',
+      name: '北部代理',
       email: 'dealer-north@website-v2.local',
       password: passwordHash,
       role: 'dealer',
-      region: 'north',
+      region: 'A',
     },
   });
 
@@ -136,6 +139,7 @@ async function main() {
     where: { email: 'manager-default@website-v2.local' },
     update: { password: passwordHash },
     create: {
+      username: 'manager_default',
       name: '預設門店店長',
       email: 'manager-default@website-v2.local',
       password: passwordHash,
@@ -148,6 +152,7 @@ async function main() {
     where: { email: 'editor@website-v2.local' },
     update: { password: passwordHash },
     create: {
+      username: 'editor',
       name: '網站編輯',
       email: 'editor@website-v2.local',
       password: passwordHash,

@@ -23,6 +23,8 @@ export interface CreateServiceRecordDto {
   sessionsDeducted?: number;
   customerSignatureUrl?: string;
   note?: string;
+  /** course_deduction 時指定要扣的 CustomerCourse id，避免撿到已用盡的舊課程 */
+  customerCourseId?: number;
 }
 
 /** 服務紀錄明細（回傳給前端） */
@@ -114,7 +116,7 @@ export class ServiceRecordService {
           break;
 
         case 'course_deduction':
-          await this.handleCourseDeduction(tx, dto.customerId, dto.serviceItemId, sessionsToDeduct);
+          await this.handleCourseDeduction(tx, dto.customerId, dto.serviceItemId, sessionsToDeduct, dto.customerCourseId);
           break;
 
         case 'single_purchase': {
@@ -197,7 +199,7 @@ export class ServiceRecordService {
     from?: string,
     to?: string,
   ): Promise<ServiceRecordDetail[]> {
-    if (actor.role === 'manager' && actor.storeId !== storeId) {
+    if ((actor.role === 'manager' || actor.role === 'accountant') && actor.storeId !== storeId) {
       throw new AppError('PERMISSION_DENIED', '只能查看自己所屬分店的資料', 403);
     }
     const fromDate = from ? new Date(from) : (() => { const d = new Date(); d.setDate(1); d.setHours(0,0,0,0); return d; })();
@@ -294,14 +296,29 @@ export class ServiceRecordService {
     customerId: number,
     serviceItemId: number,
     sessions: number,
+    customerCourseId?: number,
   ) {
-    const course = await tx.customerCourse.findFirst({
-      where: { customerId, serviceItemId },
-      orderBy: { createdAt: 'asc' }, // 先買先用
-    });
+    // 若前端指定了 courseId，直接用它（避免撿到已用盡的舊課程）；
+    // 否則 fallback：依 serviceItemId 找，跳過已用盡的，取最舊的有效課程
+    let course: { id: number; totalSessions: number; usedSessions: number } | null = null;
 
-    if (!course) {
-      throw new AppError('COURSE_NOT_FOUND', '找不到此顧客持有的課程', 404);
+    if (customerCourseId) {
+      course = await tx.customerCourse.findFirst({
+        where: { id: customerCourseId, customerId },
+      });
+      if (!course) {
+        throw new AppError('COURSE_NOT_FOUND', '找不到指定的課程紀錄', 404);
+      }
+    } else {
+      // 找第一張還有剩餘堂數的課程（先買先用）
+      const courses = await tx.customerCourse.findMany({
+        where: { customerId, serviceItemId },
+        orderBy: { createdAt: 'asc' },
+      });
+      course = courses.find((c) => c.totalSessions - c.usedSessions > 0) ?? null;
+      if (!course) {
+        throw new AppError('COURSE_NOT_FOUND', '找不到此顧客持有的課程', 404);
+      }
     }
 
     const remaining = course.totalSessions - course.usedSessions;
@@ -354,7 +371,7 @@ export class ServiceRecordService {
 
   private assertStoreAccess(actor: AuthenticatedUser, storeId: number) {
     if (isAdminRole(actor.role)) return;
-    if (actor.role === 'dealer') return; // dealer 可跨分店查看（區域層）
+    if (actor.role === 'dealer' || actor.role === 'general_agent') return; // dealer/general_agent 可跨分店查看（區域層）
     if (actor.storeId !== storeId) {
       throw new AppError('PERMISSION_DENIED', '您只能操作所屬分店的資料', 403);
     }
@@ -386,5 +403,91 @@ export class ServiceRecordService {
       note: r.note,
       createdAt: r.createdAt.toISOString(),
     };
+  }
+
+  /**
+   * 還原課程核銷（店長專屬）：
+   * 1. ServiceRecord 標記 isRolledBack
+   * 2. CustomerCourse.usedSessions -= sessionsDeducted
+   */
+  async rollback(actor: AuthenticatedUser, recordId: number) {
+    if (actor.role !== 'manager' && !isAdminRole(actor.role)) {
+      throw new AppError('PERMISSION_DENIED', '只有店長或系統管理員可以還原核銷紀錄', 403);
+    }
+
+    const record = await this.prisma.serviceRecord.findFirst({
+      where: { id: recordId, consumptionType: 'course_deduction', isRolledBack: false },
+    });
+
+    if (!record) {
+      throw new AppError('SERVICE_RECORD_NOT_FOUND', '找不到可還原的課程核銷紀錄', 404);
+    }
+
+    if (actor.role === 'manager' && actor.storeId !== record.storeId) {
+      throw new AppError('PERMISSION_DENIED', '只能還原自己所屬分店的核銷紀錄', 403);
+    }
+
+    const sessionsToRestore = record.sessionsDeducted ?? 1;
+
+    const course = await this.prisma.customerCourse.findFirst({
+      where: {
+        customerId: record.customerId,
+        serviceItemId: record.serviceItemId,
+        storeId: record.storeId,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const now = new Date();
+    await this.prisma.$transaction([
+      this.prisma.serviceRecord.update({
+        where: { id: recordId },
+        data: { isRolledBack: true, rolledBackAt: now, rollbackOperatorId: actor.id },
+      }),
+      ...(course
+        ? [
+            this.prisma.customerCourse.update({
+              where: { id: course.id },
+              data: { usedSessions: { decrement: sessionsToRestore } },
+            }),
+          ]
+        : []),
+    ]);
+
+    return { success: true, recordId, restoredSessions: sessionsToRestore, rolledBackAt: now.toISOString() };
+  }
+
+  /** 列出顧客的課程核銷紀錄（含還原狀態） */
+  async listCourseDeductionsForCustomer(actor: AuthenticatedUser, customerId: number) {
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: customerId, deletedAt: null },
+      select: { storeId: true },
+    });
+    if (!customer) throw new AppError('CUSTOMER_NOT_FOUND', '找不到此顧客', 404);
+
+    if (actor.role === 'manager' && actor.storeId !== customer.storeId) {
+      throw new AppError('PERMISSION_DENIED', '無權限存取此顧客資料', 403);
+    }
+
+    const records = await this.prisma.serviceRecord.findMany({
+      where: { customerId, consumptionType: 'course_deduction' },
+      include: {
+        serviceItem: { select: { id: true, name: true } },
+        staff: { select: { id: true, name: true } },
+        rollbackOperator: { select: { id: true, name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return records.map((r) => ({
+      id: r.id,
+      serviceItem: r.serviceItem,
+      staff: r.staff,
+      sessionsDeducted: r.sessionsDeducted,
+      isRolledBack: r.isRolledBack,
+      rolledBackAt: r.rolledBackAt?.toISOString() ?? null,
+      rollbackOperator: r.rollbackOperator,
+      createdAt: r.createdAt.toISOString(),
+    }));
   }
 }

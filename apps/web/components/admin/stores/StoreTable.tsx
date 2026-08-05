@@ -12,9 +12,9 @@ interface StoreTableProps {
 }
 
 const REGION_LABEL: Record<StoreSummary['region'], string> = {
-  north: '北部',
-  central: '中部',
-  south: '南部',
+  A: '北部',
+  B: '中部',
+  C: '南部',
 };
 
 export function StoreTable({ stores, onToggleStatus, togglingId, canToggleStatus, onDelete, deletingId, onEdit }: StoreTableProps) {

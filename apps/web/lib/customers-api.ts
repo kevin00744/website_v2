@@ -116,7 +116,56 @@ export interface CustomerCourseItem {
   totalSessions: number;
   usedSessions: number;
   remainingSessions: number;
+  purchasePrice: number | null;
   createdAt: string;
+}
+
+/** 外泌體補簽同意書 */
+export function signExosomeConsent(
+  customerId: number,
+  input: { signatureUrl: string; signaturePoints?: { x: number; y: number }[]; notes?: string },
+): Promise<{ success: boolean; signedAt: string }> {
+  return apiRequest(`/customers/${customerId}/exosome-consent`, { method: 'POST', json: input });
+}
+
+/** 退課程轉儲值金 */
+export function refundCourseToCredit(
+  courseId: number,
+  input: { refundedSessions: number; calculatedAmount: number; finalAmount: number; remark?: string },
+): Promise<{ success: boolean; refundedSessions: number; finalAmount: number; newStoreCredit: string }> {
+  return apiRequest(`/customer-courses/${courseId}/refund-to-credit`, { method: 'POST', json: input });
+}
+
+/** 課程轉換 */
+export function convertCourse(
+  courseId: number,
+  input: { newServiceItemId: number; newTotalSessions: number; newPurchasePrice?: number; convertedSessions: number; remark?: string },
+): Promise<{ success: boolean; fromCourseId: number; toCourseId: number; convertedSessions: number }> {
+  return apiRequest(`/customer-courses/${courseId}/convert`, { method: 'POST', json: input });
+}
+
+export interface CourseDeductionRecord {
+  id: number;
+  serviceItem: { id: number; name: string };
+  staff: { id: number; name: string };
+  sessionsDeducted: number | null;
+  isRolledBack: boolean;
+  rolledBackAt: string | null;
+  rollbackOperator: { id: number; name: string } | null;
+  createdAt: string;
+}
+
+/** 顧客課程核銷歷程（shop 層級路由） */
+export function listCourseDeductions(storeId: number, customerId: number): Promise<CourseDeductionRecord[]> {
+  return apiRequest(`/stores/${storeId}/service-records/course-deductions/${customerId}`);
+}
+
+/** 還原課程核銷 */
+export function rollbackServiceRecord(
+  storeId: number,
+  recordId: number,
+): Promise<{ success: boolean; restoredSessions: number }> {
+  return apiRequest(`/stores/${storeId}/service-records/${recordId}/rollback`, { method: 'POST' });
 }
 
 export function listCustomerCourses(customerId: number): Promise<CustomerCourseItem[]> {

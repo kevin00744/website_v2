@@ -116,7 +116,7 @@ export class CustomerTreatmentService {
     if (!customer) throw new AppError('CUSTOMER_NOT_FOUND', '找不到此顧客', 404);
 
     if (actor.role === 'system_admin' || actor.role === 'admin') return;
-    if (actor.role === 'dealer') {
+    if (actor.role === 'dealer' || actor.role === 'general_agent') {
       if (actor.region && customer.store.region !== actor.region) {
         throw new AppError('FORBIDDEN', '無法存取其他區域的顧客資料', 403);
       }

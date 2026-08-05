@@ -236,7 +236,7 @@ export class FinancialService {
    */
   private assertStoreAccess(actor: AuthenticatedUser, storeId: number) {
     if (isAdminRole(actor.role)) return;
-    if ((actor.role === 'manager' || actor.role === 'staff') && actor.storeId !== storeId) {
+    if ((actor.role === 'manager' || actor.role === 'staff' || actor.role === 'accountant') && actor.storeId !== storeId) {
       throw new AppError('PERMISSION_DENIED', '您只能操作所屬分店的帳務', 403);
     }
   }

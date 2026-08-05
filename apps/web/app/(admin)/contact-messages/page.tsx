@@ -11,12 +11,12 @@ import { formatDate } from '@/lib/format';
 
 /** 對齊後端 ContactController：admin/system_admin 一律放行；dealer/manager 額外開放（範圍各自限縮） */
 function canViewMessages(role: AuthUser['role'] | undefined): boolean {
-  return role === 'admin' || role === 'system_admin' || role === 'dealer' || role === 'manager';
+  return role === 'admin' || role === 'system_admin' || role === 'dealer' || role === 'general_agent' || role === 'manager';
 }
 
-/** 只有經銷商能把體驗諮詢轉給分店；admin/system_admin 不需要轉發功能（這是經銷商的工作流程） */
+/** 經銷商／總代理能把體驗諮詢轉給分店；admin/system_admin 不需要轉發功能（這是經銷商的工作流程） */
 function canForward(role: AuthUser['role'] | undefined): boolean {
-  return role === 'dealer';
+  return role === 'dealer' || role === 'general_agent';
 }
 
 /** 對齊後端 ContactController 的 admin/messages/:id 刪除路由 @Roles('system_admin')：只有 admin/system_admin 能刪 */

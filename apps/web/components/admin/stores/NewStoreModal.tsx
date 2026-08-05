@@ -21,9 +21,9 @@ interface NewStoreModalProps {
 }
 
 const REGION_OPTIONS = [
-  { value: 'north', label: '北部' },
-  { value: 'central', label: '中部' },
-  { value: 'south', label: '南部' },
+  { value: 'A', label: 'A - 北部' },
+  { value: 'B', label: 'B - 中部' },
+  { value: 'C', label: 'C - 南部' },
 ];
 
 /**

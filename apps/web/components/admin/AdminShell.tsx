@@ -13,10 +13,12 @@ import { ChatInboxModal } from './chat/ChatInboxModal';
 
 const ROLE_LABEL: Record<AuthUser['role'], string> = {
   system_admin: '系統管理員',
+  general_agent: '總代理',
   admin: '管理員',
   editor: '編輯',
-  dealer: '經銷商',
+  dealer: '區域代理',
   manager: '店長',
+  accountant: '會計',
   staff: '服務人員',
 };
 

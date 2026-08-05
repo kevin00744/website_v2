@@ -17,31 +17,33 @@ export class AuthService {
     private readonly jwtService: JwtService,
   ) {}
 
-  async login(email: string, password: string): Promise<LoginResult> {
+  async login(username: string, password: string): Promise<LoginResult> {
     const user = await this.prisma.user.findFirst({
-      where: { email, deletedAt: null },
-      select: { id: true, email: true, name: true, role: true, storeId: true, region: true, password: true, isActive: true },
+      where: { username, deletedAt: null },
+      select: { id: true, username: true, email: true, name: true, role: true, storeId: true, region: true, dealerId: true, password: true, isActive: true },
     });
 
     // 帳號不存在跟密碼錯誤回同一個錯誤碼，不讓門市人員（或攻擊者）從錯誤訊息分辨出帳號是否存在
     if (!user || !user.isActive) {
-      throw new AppError('AUTH_INVALID_CREDENTIALS', 'invalid email or password', 401);
+      throw new AppError('AUTH_INVALID_CREDENTIALS', 'invalid username or password', 401);
     }
 
     const passwordMatches = await bcrypt.compare(password, user.password);
     if (!passwordMatches) {
-      throw new AppError('AUTH_INVALID_CREDENTIALS', 'invalid email or password', 401);
+      throw new AppError('AUTH_INVALID_CREDENTIALS', 'invalid username or password', 401);
     }
 
     const storeFeatures = await this.getStoreFeatures(user.storeId);
 
     const authenticatedUser: AuthenticatedUser = {
       id: user.id,
+      username: user.username,
       email: user.email,
       name: user.name,
       role: user.role,
       storeId: user.storeId,
       region: user.region,
+      dealerId: user.dealerId,
       storeFeatures,
     };
 

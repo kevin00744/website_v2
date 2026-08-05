@@ -55,7 +55,7 @@ export class WsJwtGuard implements CanActivate {
       const payload = this.jwtService.verify<JwtPayload>(token, { secret: JWT_SECRET });
       const user = await this.prisma.user.findFirst({
         where: { id: payload.sub, deletedAt: null, isActive: true },
-        select: { id: true, email: true, name: true, role: true, storeId: true, region: true },
+        select: { id: true, username: true, email: true, name: true, role: true, storeId: true, region: true, dealerId: true },
       });
       if (!user) return null;
 

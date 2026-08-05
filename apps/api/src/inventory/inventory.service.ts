@@ -312,7 +312,7 @@ export class InventoryService {
     const where: Prisma.RestockRequestWhereInput = {
       ...(isCompleted !== undefined ? { isCompleted } : {}),
       ...(actor.role === 'manager' && actor.storeId ? { storeId: actor.storeId } : {}),
-      ...(actor.role === 'dealer' && actor.region ? { store: { region: actor.region } } : {}),
+      ...(actor.role === 'dealer' || actor.role === 'general_agent') && actor.region ? { store: { region: actor.region } } : {},
     };
 
     const requests = await this.prisma.restockRequest.findMany({
@@ -335,7 +335,7 @@ export class InventoryService {
     if (!existing) {
       throw new AppError('RESTOCK_REQUEST_NOT_FOUND', `restock request ${id} not found`, 404);
     }
-    if (actor.role === 'dealer' && existing.store.region !== actor.region) {
+    if ((actor.role === 'dealer' || actor.role === 'general_agent') && existing.store.region !== actor.region) {
       throw new AppError('RESTOCK_REQUEST_NOT_FOUND', `restock request ${id} not visible to actor ${actor.id}`, 404);
     }
     if (existing.isCompleted) {

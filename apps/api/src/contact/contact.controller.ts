@@ -91,7 +91,7 @@ export class ContactController {
    */
   @Get('admin/messages')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('dealer', 'manager')
+  @Roles('dealer', 'manager', 'general_agent')
   listMessages(@CurrentUser() actor: AuthenticatedUser, @Query('isHandled') isHandled?: string) {
     const parsed = isHandled === undefined ? undefined : isHandled === 'true';
     return this.contactService.listMessages(actor, parsed);
@@ -100,7 +100,7 @@ export class ContactController {
   /** 經銷商把體驗諮詢轉給特定分店；manager 不能轉（轉發是經銷商的事），admin 不受區域限制 */
   @Patch('admin/messages/:id/forward')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('dealer')
+  @Roles('dealer', 'general_agent')
   forward(@CurrentUser() actor: AuthenticatedUser, @Param('id', ParseIntPipe) id: number, @Body() dto: ForwardContactMessageDto) {
     return this.contactService.forwardMessage(actor, id, dto.storeId);
   }
@@ -108,7 +108,7 @@ export class ContactController {
   /** 打勾標記已處理／取消，dealer/manager 都能標記自己看得到的訊息 */
   @Patch('admin/messages/:id/handled')
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles('dealer', 'manager')
+  @Roles('dealer', 'manager', 'general_agent')
   markHandled(@CurrentUser() actor: AuthenticatedUser, @Param('id', ParseIntPipe) id: number, @Body() dto: MarkHandledDto) {
     return this.contactService.markHandled(actor, id, dto.isHandled);
   }

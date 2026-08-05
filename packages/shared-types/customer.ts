@@ -149,7 +149,7 @@ export interface CustomerListItem {
   nationalId: string | null;
   customerCode: string | null;
   storeName: string;
-  region: 'north' | 'central' | 'south';
+  region: 'A' | 'B' | 'C';
   createdAt: string;
 }
 
@@ -176,6 +176,9 @@ export interface CustomerDetail {
   canDelete: boolean;
   isExosomeUser: boolean;
   exosomeConsentSignatureUrl: string | null;
+  hasExosomeConsent: boolean;
+  exosomeConsentSignedAt: string | null;
+  storeCredit: string;
 }
 
 /** 切換 requiresSignature 就是「設定簽名位置」的唯一機制，座標由後端排版引擎自動算出 */

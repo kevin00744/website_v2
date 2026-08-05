@@ -20,7 +20,7 @@ interface AddRecordDto {
 
 @Controller('financial')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('staff', 'manager', 'dealer')
+@Roles('staff', 'manager', 'dealer', 'general_agent')
 export class FinancialController {
   constructor(
     private readonly financialService: FinancialService,
@@ -49,7 +49,7 @@ export class FinancialController {
 
   /** 分店當日帳務摘要 + 備用金水位 */
   @Get('stores/:storeId/daily-balance')
-  @Roles('manager')
+  @Roles('manager', 'accountant')
   getDailyBalance(@CurrentUser() actor: AuthenticatedUser, @Param('storeId', ParseIntPipe) storeId: number) {
     return this.financialService.getDailyBalance(actor, storeId);
   }
@@ -59,7 +59,7 @@ export class FinancialController {
    * category 可傳逗號分隔多個值（e.g. sales,top_up）。
    */
   @Get('stores/:storeId/records')
-  @Roles('manager')
+  @Roles('manager', 'accountant')
   listRecords(
     @CurrentUser() actor: AuthenticatedUser,
     @Param('storeId', ParseIntPipe) storeId: number,

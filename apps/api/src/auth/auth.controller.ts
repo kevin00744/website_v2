@@ -16,7 +16,7 @@ export class AuthController {
 
   @Post('login')
   login(@Body() dto: LoginDto) {
-    return this.authService.login(dto.email, dto.password);
+    return this.authService.login(dto.username, dto.password);
   }
 
   /** 給前端在 token 還沒過期前快速確認「我現在是誰」；storeFeatures 即時從 DB 查（不存在 JWT 裡） */

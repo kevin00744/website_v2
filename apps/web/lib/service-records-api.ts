@@ -33,6 +33,7 @@ export interface CreateServiceRecordInput {
   sessionsDeducted?: number;
   customerSignatureUrl?: string;
   note?: string;
+  customerCourseId?: number;
 }
 
 export interface ServiceRecordResult {

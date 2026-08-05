@@ -5,11 +5,14 @@ const USER_COOKIE = 'wv2_user';
 
 export interface AuthUser {
   id: number;
+  username: string;
   email: string;
   name: string;
-  role: 'system_admin' | 'admin' | 'editor' | 'dealer' | 'manager' | 'staff';
+  role: 'system_admin' | 'general_agent' | 'admin' | 'editor' | 'dealer' | 'manager' | 'accountant' | 'staff';
   storeId: number | null;
-  region: 'north' | 'central' | 'south' | null;
+  region: 'A' | 'B' | 'C' | null;
+  dealerId: number | null;
+  phone: string | null;
   /** 登入時從後端取得，store 功能開關（例如 { pos: true, attendance: true }）。
    *  admin/system_admin 不受此限制（由 hasFeature 的超集邏輯處理）。 */
   storeFeatures: Record<string, boolean> | null;

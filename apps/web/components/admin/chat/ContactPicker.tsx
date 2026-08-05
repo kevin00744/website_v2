@@ -13,7 +13,7 @@ interface ContactPickerProps {
   starting: boolean;
 }
 
-const REGION_LABEL: Record<string, string> = { north: '北區', central: '中區', south: '南區' };
+const REGION_LABEL: Record<string, string> = { A: '北區', B: '中區', C: '南區' };
 
 /** 「找人聊天」的聯絡人清單：只列經銷商/管理員/系統管理員，對齊業務上的溝通方向（向上反映問題） */
 export function ContactPicker({ onSelect, onCancel, starting }: ContactPickerProps) {

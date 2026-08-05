@@ -7,9 +7,9 @@ interface CustomerTableProps {
 }
 
 const REGION_LABEL: Record<CustomerListItem['region'], string> = {
-  north: '北部',
-  central: '中部',
-  south: '南部',
+  A: '北部',
+  B: '中部',
+  C: '南部',
 };
 
 /**

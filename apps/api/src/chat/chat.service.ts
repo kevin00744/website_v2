@@ -195,7 +195,7 @@ export class ChatService {
       return users.map((user) => user.id);
     }
 
-    if (subject.role === 'dealer') {
+    if (subject.role === 'dealer' || subject.role === 'general_agent') {
       if (!subject.region) return [];
       const [admins, managers] = await Promise.all([
         this.prisma.user.findMany({
@@ -232,20 +232,20 @@ export class ChatService {
       return [...admins, ...dealers, ...storeStaff].map((user) => user.id);
     }
 
-    // staff：可以聯絡同一分店的 manager 和其他 staff
-    if (subject.role === 'staff') {
+    // staff / accountant：自己店的店長 + 所有 admin + system_admin
+    if (subject.role === 'staff' || subject.role === 'accountant') {
       if (!subject.storeId) return [];
-      const storeMembers = await this.prisma.user.findMany({
-        where: {
-          deletedAt: null,
-          isActive: true,
-          storeId: subject.storeId,
-          id: { not: subject.id },
-          role: { in: ['manager', 'staff'] },
-        },
-        select: { id: true },
-      });
-      return storeMembers.map((user) => user.id);
+      const [storeManagers, admins] = await Promise.all([
+        this.prisma.user.findMany({
+          where: { deletedAt: null, isActive: true, storeId: subject.storeId, role: 'manager' },
+          select: { id: true },
+        }),
+        this.prisma.user.findMany({
+          where: { deletedAt: null, isActive: true, role: { in: ['admin', 'system_admin'] } },
+          select: { id: true },
+        }),
+      ]);
+      return [...storeManagers, ...admins].map((user) => user.id);
     }
 
     return [];
@@ -259,16 +259,14 @@ export class ChatService {
    */
   async listContacts(actor: AuthenticatedUser) {
     let contactIds: number[];
-    if (actor.role === 'dealer' || actor.role === 'manager') {
+    if (actor.role === 'dealer' || actor.role === 'general_agent' || actor.role === 'manager') {
       const overrides = await this.prisma.chatContactPermission.findMany({
         where: { userId: actor.id },
         select: { contactUserId: true },
       });
       contactIds = overrides.length > 0 ? overrides.map((o) => o.contactUserId) : await this.resolveDefaultContactIds(actor);
-    } else if (actor.role === 'staff') {
-      // staff 不受 ChatContactPermission 覆寫機制管制，直接用預設清單（同分店的 manager/staff）
-      contactIds = await this.resolveDefaultContactIds(actor);
     } else {
+      // staff / accountant / admin / system_admin / general_agent 全部走預設清單
       contactIds = await this.resolveDefaultContactIds(actor);
     }
 

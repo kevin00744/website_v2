@@ -15,7 +15,7 @@ interface ChatContactPermissionModalProps {
   candidates: ChatManageableUser[];
 }
 
-const REGION_LABEL: Record<string, string> = { north: '北區', central: '中區', south: '南區' };
+const REGION_LABEL: Record<string, string> = { A: '北區', B: '中區', C: '南區' };
 
 /**
  * admin/system_admin 用來調整某個 dealer/manager 可聊天清單的畫面：

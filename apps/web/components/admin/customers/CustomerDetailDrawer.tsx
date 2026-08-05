@@ -6,7 +6,13 @@ import { useForm } from 'react-hook-form';
 import { customerUpdateSchema, type CustomerDetail, type CustomerUpdateInput } from '@website-v2/shared-types';
 import { ApiError } from '@/lib/api-client';
 import { getAuthUser, type AuthUser } from '@/lib/auth';
-import { deleteCustomer, getCustomerDetail, updateCustomer } from '@/lib/customers-api';
+import {
+  deleteCustomer,
+  getCustomerDetail,
+  listCustomerCourses,
+  updateCustomer,
+  type CustomerCourseItem,
+} from '@/lib/customers-api';
 import { KioskButton } from '../kiosk/KioskButton';
 import { KioskInput } from '../kiosk/KioskInput';
 import { MaskedPhoneInput } from '../kiosk/MaskedInput';
@@ -15,6 +21,9 @@ import { ExosomeConsentModal } from './ExosomeConsentModal';
 import { TreatmentRecordTab } from './TreatmentRecordTab';
 import { NewTreatmentModal } from './NewTreatmentModal';
 import { POSCheckoutModal } from './POSCheckoutModal';
+import { CourseRefundModal } from './CourseRefundModal';
+import { CourseConvertModal } from './CourseConvertModal';
+import { ExosomeBacksignModal } from './ExosomeBacksignModal';
 
 interface CustomerDetailDrawerProps {
   customerId: number;
@@ -22,7 +31,7 @@ interface CustomerDetailDrawerProps {
   onDeleted: () => void;
 }
 
-type Tab = 'profile' | 'treatments';
+type Tab = 'profile' | 'treatments' | 'courses';
 
 /** 對齊後端 InventoryController 的 @Roles('manager')：admin/system_admin/manager 才能記錄商品使用 */
 function canConsumeInventory(role: AuthUser['role'] | undefined): boolean {
@@ -32,6 +41,11 @@ function canConsumeInventory(role: AuthUser['role'] | undefined): boolean {
 /** 對齊後端 CustomersController 的 DELETE :id 路由覆寫 @Roles('admin')：刪顧客只開放給 admin/system_admin */
 function canDeleteCustomer(role: AuthUser['role'] | undefined): boolean {
   return role === 'admin' || role === 'system_admin';
+}
+
+/** 退課轉儲值 / 課程轉換 限 manager 以上 */
+function canManageCourses(role: AuthUser['role'] | undefined): boolean {
+  return role === 'manager' || role === 'admin' || role === 'system_admin';
 }
 
 /**
@@ -49,9 +63,14 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
   const [treatmentKey, setTreatmentKey] = useState(0);
   const [posModalOpen, setPosModalOpen] = useState(false);
   const [exosomeModalOpen, setExosomeModalOpen] = useState(false);
+  const [exosomeBacksignOpen, setExosomeBacksignOpen] = useState(false);
   const [user, setUser] = useState<AuthUser>();
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string>();
+  const [courses, setCourses] = useState<CustomerCourseItem[]>();
+  const [coursesLoading, setCoursesLoading] = useState(false);
+  const [refundCourse, setRefundCourse] = useState<CustomerCourseItem>();
+  const [convertCourse, setConvertCourse] = useState<CustomerCourseItem>();
 
   useEffect(() => {
     setUser(getAuthUser());
@@ -88,6 +107,18 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
   useEffect(() => {
     void loadDetail();
   }, [loadDetail]);
+
+  async function loadCourses() {
+    setCoursesLoading(true);
+    try {
+      const list = await listCustomerCourses(customerId);
+      setCourses(list);
+    } catch {
+      // silently swallow — error visible in tab UI
+    } finally {
+      setCoursesLoading(false);
+    }
+  }
 
   async function handleDelete() {
     if (!detail) return;
@@ -151,6 +182,12 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
           <KioskButton variant={tab === 'treatments' ? 'primary' : 'secondary'} onClick={() => setTab('treatments')}>
             使用紀錄
           </KioskButton>
+          <KioskButton
+            variant={tab === 'courses' ? 'primary' : 'secondary'}
+            onClick={() => { setTab('courses'); if (!courses) void loadCourses(); }}
+          >
+            課程管理
+          </KioskButton>
         </div>
         <div className="flex gap-2">
           {canConsumeInventory(user?.role) && (
@@ -179,6 +216,15 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
 
       {tab === 'profile' && (
         <>
+          {/* 儲值金餘額 */}
+          {parseFloat(detail.storeCredit) > 0 && (
+            <div className="rounded-kiosk border border-blue-200 bg-blue-50 p-3">
+              <p className="text-sm text-blue-700">
+                儲值金餘額：<strong className="text-blue-900">${parseFloat(detail.storeCredit).toLocaleString()}</strong>
+              </p>
+            </div>
+          )}
+
           {/* 外泌體同意書區塊：依顧客狀態顯示不同 UI */}
           {!detail.isExosomeUser ? (
             /* 未勾選外泌體：顯示「外泌體同意書」按鈕，取代簽署區塊 */
@@ -193,10 +239,25 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
                 </KioskButton>
               </div>
             </div>
+          ) : detail.hasExosomeConsent ? (
+            /* 外泌體補簽同意書已完成 */
+            <div className="rounded-kiosk border border-green-200 bg-green-50 p-4">
+              <p className="text-kiosk-base font-semibold text-green-700">✓ 外泌體補簽同意書已完成</p>
+              {detail.exosomeConsentSignedAt && (
+                <p className="mt-1 text-sm text-green-600">
+                  簽署日期：{new Date(detail.exosomeConsentSignedAt).toLocaleDateString('zh-TW')}
+                </p>
+              )}
+            </div>
           ) : detail.disclaimerFullySigned ? (
-            /* 已完整簽署 */
+            /* 已完整簽署（原始簽署流程）→ 提供補簽選項 */
             <div className="rounded-kiosk border border-green-200 bg-green-50 p-4">
               <p className="text-kiosk-base font-semibold text-green-700">✓ 外泌體同意書已完成雙方簽署</p>
+              <div className="mt-2">
+                <KioskButton variant="secondary" onClick={() => setExosomeBacksignOpen(true)}>
+                  外泌體補簽同意書
+                </KioskButton>
+              </div>
             </div>
           ) : (
             /* 外泌體使用者但未完成簽署（含服務人員已簽、顧客未簽的中間狀態） */
@@ -280,6 +341,92 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
         <TreatmentRecordTab key={treatmentKey} customerId={customerId} storeId={detail.storeId} />
       )}
 
+      {tab === 'courses' && (() => {
+        // 按 serviceItemId 合併同品項課程（A+B 套裝含相同品項時顯示合計）
+        const mergedGroups = courses
+          ? Object.values(
+              courses.reduce(
+                (acc, c) => {
+                  const key = c.serviceItem.id;
+                  if (!acc[key]) acc[key] = { serviceItem: c.serviceItem, totalSessions: 0, usedSessions: 0, remainingSessions: 0, items: [] };
+                  acc[key].totalSessions += c.totalSessions;
+                  acc[key].usedSessions += c.usedSessions;
+                  acc[key].remainingSessions += c.remainingSessions;
+                  acc[key].items.push(c);
+                  return acc;
+                },
+                {} as Record<number, { serviceItem: CustomerCourseItem['serviceItem']; totalSessions: number; usedSessions: number; remainingSessions: number; items: CustomerCourseItem[] }>,
+              ),
+            )
+          : undefined;
+
+        return (
+          <div className="flex flex-col gap-4">
+            <h3 className="text-kiosk-base font-bold text-slate-800">
+              已購課程
+              {mergedGroups && <span className="ml-2 text-sm font-normal text-slate-400">共 {mergedGroups.length} 種</span>}
+            </h3>
+
+            {coursesLoading && <p className="text-sm text-slate-400">載入中…</p>}
+            {mergedGroups?.length === 0 && (
+              <p className="rounded-kiosk bg-slate-50 p-4 text-center text-sm text-slate-400">尚無購課紀錄</p>
+            )}
+            {mergedGroups?.map((group) => (
+              <div key={group.serviceItem.id} className="rounded-kiosk border border-slate-200 bg-white p-4 flex flex-col gap-3">
+                {/* 合計欄 */}
+                <div className="flex items-start justify-between gap-2">
+                  <p className="font-semibold text-slate-900">{group.serviceItem.name}</p>
+                  <div className="text-right text-sm text-slate-500 shrink-0">
+                    <p>總堂數：{group.totalSessions}</p>
+                    <p>已用：{group.usedSessions}</p>
+                    <p className={group.remainingSessions === 0 ? 'text-slate-400' : 'font-semibold text-slate-800'}>
+                      剩餘：{group.remainingSessions} 堂
+                    </p>
+                  </div>
+                </div>
+
+                {/* 若來自多張課程，顯示各課程明細（供管理操作） */}
+                {group.items.length > 1 && (
+                  <div className="flex flex-col gap-2 border-t border-slate-100 pt-2">
+                    {group.items.map((c) => (
+                      <div key={c.id} className="flex flex-col gap-2 rounded bg-slate-50 p-3">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-slate-500">
+                            購入 {c.totalSessions} 堂
+                            {c.purchasePrice != null && `（$${c.purchasePrice.toLocaleString()}）`}
+                          </span>
+                          <span className={c.remainingSessions === 0 ? 'text-slate-400' : 'font-semibold text-slate-700'}>
+                            剩 {c.remainingSessions} 堂
+                          </span>
+                        </div>
+                        {canManageCourses(user?.role) && c.remainingSessions > 0 && (
+                          <div className="flex gap-2 flex-wrap">
+                            <KioskButton variant="secondary" onClick={() => setRefundCourse(c)}>退課轉儲值</KioskButton>
+                            <KioskButton variant="secondary" onClick={() => setConvertCourse(c)}>課程轉換</KioskButton>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* 只有一張課程時直接在合計欄顯示管理按鈕 */}
+                {group.items.length === 1 && canManageCourses(user?.role) && group.remainingSessions > 0 && (
+                  <div className="flex gap-2 flex-wrap">
+                    <KioskButton variant="secondary" onClick={() => setRefundCourse(group.items[0])}>
+                      退課轉儲值
+                    </KioskButton>
+                    <KioskButton variant="secondary" onClick={() => setConvertCourse(group.items[0])}>
+                      課程轉換
+                    </KioskButton>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        );
+      })()}
+
       <NewTreatmentModal
         open={treatmentModalOpen}
         customerId={customerId}
@@ -302,6 +449,17 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
         onClose={() => setExosomeModalOpen(false)}
       />
 
+      <ExosomeBacksignModal
+        open={exosomeBacksignOpen}
+        customerId={customerId}
+        customerName={detail?.name ?? ''}
+        onCompleted={() => {
+          setExosomeBacksignOpen(false);
+          void loadDetail();
+        }}
+        onClose={() => setExosomeBacksignOpen(false)}
+      />
+
       {detail && (
         <POSCheckoutModal
           open={posModalOpen}
@@ -316,6 +474,32 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
             setTab('treatments');
             setTreatmentKey((k) => k + 1);
           }}
+        />
+      )}
+
+      {refundCourse && (
+        <CourseRefundModal
+          open={!!refundCourse}
+          course={refundCourse}
+          onCompleted={(newStoreCredit) => {
+            setRefundCourse(undefined);
+            setDetail((prev) => prev ? { ...prev, storeCredit: newStoreCredit } : prev);
+            void loadCourses();
+          }}
+          onClose={() => setRefundCourse(undefined)}
+        />
+      )}
+
+      {convertCourse && detail && (
+        <CourseConvertModal
+          open={!!convertCourse}
+          course={convertCourse}
+          storeId={detail.storeId}
+          onCompleted={() => {
+            setConvertCourse(undefined);
+            void loadCourses();
+          }}
+          onClose={() => setConvertCourse(undefined)}
         />
       )}
     </div>

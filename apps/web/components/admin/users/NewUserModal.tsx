@@ -4,7 +4,9 @@ import { useEffect, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import {
-  ASSIGNABLE_ROLES,
+  ALL_ASSIGNABLE_ROLES,
+  CREATOR_CAN_ASSIGN,
+  ROLE_LABEL,
   createUserSchema,
   updateUserSchema,
   type CreateUserInput,
@@ -13,6 +15,7 @@ import {
   type UserSummary,
 } from '@website-v2/shared-types';
 import { ApiError } from '@/lib/api-client';
+import { getAuthUser, type AuthUser } from '@/lib/auth';
 import { createUser, updateUser } from '@/lib/users-api';
 import { listStores } from '@/lib/stores-api';
 import { CenteredModal } from '@/components/admin/kiosk/CenteredModal';
@@ -24,32 +27,38 @@ interface NewUserModalProps {
   open: boolean;
   onClose: () => void;
   onSaved: (user: UserSummary) => void;
-  /** 有帶這個 prop 就是編輯模式（沒有密碼欄位），不帶就是新增模式 */
   editingUser?: UserSummary;
-  /** dealer 開的時候鎖角色＝manager，不顯示角色下拉——對齊後端只允許 dealer 開店長帳號的限制 */
-  lockedToManager?: boolean;
 }
 
 const REGION_OPTIONS = [
-  { value: 'north', label: '北部' },
-  { value: 'central', label: '中部' },
-  { value: 'south', label: '南部' },
+  { value: 'A', label: 'A - 北部' },
+  { value: 'B', label: 'B - 中部' },
+  { value: 'C', label: 'C - 南部' },
 ];
 
-/** password 在 union 外面額外補一個 optional 欄位，純粹是讓 TS 不用為了一個只在新增模式出現的欄位寫一堆 cast */
 type FormValues = (CreateUserInput | UpdateUserInput) & { password?: string };
 
 /**
- * 置中大畫面（max-w-3xl）取代側欄，新增/編輯共用同一個 Modal，差別只是有沒有密碼欄位。
- *
- * 動態欄位連動防呆：選 manager 才出現「分店」下拉（必填），選 dealer 才出現「區域」下拉（必填），
- * 選 admin/editor 兩者都不顯示——用 react-hook-form 的 watch('role') 即時切換，不是送出後才知道錯。
+ * 依當前登入者角色動態產生可選角色清單：
+ * - system_admin：所有角色
+ * - 其他：依 CREATOR_CAN_ASSIGN 矩陣
  */
-export function NewUserModal({ open, onClose, onSaved, editingUser, lockedToManager }: NewUserModalProps) {
+function getAssignableRoles(actorRole: AuthUser['role']) {
+  if (actorRole === 'system_admin') return ALL_ASSIGNABLE_ROLES;
+  const allowed = CREATOR_CAN_ASSIGN[actorRole] ?? [];
+  return ALL_ASSIGNABLE_ROLES.filter((r) => allowed.includes(r.value as never));
+}
+
+export function NewUserModal({ open, onClose, onSaved, editingUser }: NewUserModalProps) {
   const isEditing = Boolean(editingUser);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string>();
   const [stores, setStores] = useState<StoreSummary[]>([]);
+  const [currentUser, setCurrentUser] = useState<AuthUser>();
+
+  useEffect(() => {
+    setCurrentUser(getAuthUser());
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -58,62 +67,81 @@ export function NewUserModal({ open, onClose, onSaved, editingUser, lockedToMana
       .catch(() => setStores([]));
   }, [open]);
 
+  const assignableRoles = getAssignableRoles(currentUser?.role ?? 'staff');
+
+  // 編輯自己的帳號時，角色欄位鎖定（任何人包括 system_admin 都不能自改 role）
+  const isSelf = editingUser?.id === currentUser?.id;
+  const roleIsLocked = isSelf || editingUser?.role === 'system_admin';
+
   const {
     register,
     handleSubmit,
     reset,
     watch,
+    setValue,
     formState: { errors, dirtyFields },
   } = useForm<FormValues>({
     resolver: zodResolver(isEditing ? updateUserSchema : createUserSchema),
     mode: 'onChange',
     defaultValues: editingUser
       ? {
+          username: editingUser.username,
           name: editingUser.name,
           email: editingUser.email,
-          role: editingUser.role === 'system_admin' ? 'admin' : editingUser.role,
+          role: editingUser.role === 'system_admin' ? 'admin' : (editingUser.role as never),
           storeId: editingUser.storeId ?? undefined,
           region: editingUser.region ?? undefined,
           phone: editingUser.phone ?? '',
           isActive: editingUser.isActive,
         }
       : {
+          username: '',
           name: '',
           email: '',
           password: '',
-          role: lockedToManager ? 'manager' : undefined,
+          role: assignableRoles[0]?.value as never,
           storeId: undefined,
           region: undefined,
           phone: '',
         },
   });
 
-  // editingUser 在開關 Modal 之間會換人，每次打開都要把表單重置成那個人的資料，不能沿用上一次殘留的值
+  // manager 的 storeId 永遠鎖定為自己的分店
+  const isManagerRole = currentUser?.role === 'manager';
+  const lockedStoreId = isManagerRole ? (currentUser?.storeId ?? undefined) : undefined;
+
+  // 總代理建立代理帳號時，區域鎖定為自己的區域
+  const isGeneralAgent = currentUser?.role === 'general_agent';
+  const lockedRegion = isGeneralAgent ? (currentUser?.region ?? undefined) : undefined;
+
   useEffect(() => {
     if (!open) return;
     reset(
       editingUser
         ? {
+            username: editingUser.username,
             name: editingUser.name,
             email: editingUser.email,
-            role: editingUser.role === 'system_admin' ? 'admin' : editingUser.role,
+            role: editingUser.role === 'system_admin' ? 'admin' : (editingUser.role as never),
             storeId: editingUser.storeId ?? undefined,
             region: editingUser.region ?? undefined,
             phone: editingUser.phone ?? '',
             isActive: editingUser.isActive,
           }
         : {
+            username: '',
             name: '',
             email: '',
             password: '',
-            role: lockedToManager ? 'manager' : undefined,
-            storeId: undefined,
-            region: undefined,
+            role: assignableRoles[0]?.value as never,
+            storeId: lockedStoreId,
+            region: lockedRegion,
             phone: '',
           },
     );
     setSubmitError(undefined);
-  }, [open, editingUser, lockedToManager, reset]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editingUser, reset]);
 
   const role = watch('role');
 
@@ -136,11 +164,28 @@ export function NewUserModal({ open, onClose, onSaved, editingUser, lockedToMana
   return (
     <CenteredModal open={open} onClose={onClose} title={isEditing ? '編輯帳號' : '新增帳號'} maxWidthClassName="md:max-w-3xl">
       <form onSubmit={handleSubmit(onSubmit)} className="flex flex-1 flex-col gap-5">
-        {editingUser?.role === 'system_admin' && (
+        {isSelf && (
           <p className="rounded-kiosk bg-amber-50 px-4 py-3 text-kiosk-base text-amber-700">
-            系統管理員帳號只能由本人自己修改，這裡的角色欄位已鎖定為管理員顯示，實際儲存時角色不會被更改。
+            您正在編輯自己的帳號。角色欄位已鎖定，無法自行變更角色。
           </p>
         )}
+        {editingUser?.role === 'system_admin' && !isSelf && (
+          <p className="rounded-kiosk bg-amber-50 px-4 py-3 text-kiosk-base text-amber-700">
+            系統管理員帳號只能由本人管理，角色欄位已鎖定。
+          </p>
+        )}
+
+        {/* 帳號 (username) */}
+        <KioskInput
+          label="登入帳號 (username)"
+          required
+          placeholder="請輸入登入帳號"
+          errorMessage={errors.username?.message}
+          isValid={Boolean(dirtyFields.username) && !errors.username}
+          {...register('username')}
+        />
+
+        {/* 姓名 */}
         <KioskInput
           label="姓名"
           required
@@ -149,8 +194,10 @@ export function NewUserModal({ open, onClose, onSaved, editingUser, lockedToMana
           isValid={Boolean(dirtyFields.name) && !errors.name}
           {...register('name')}
         />
+
+        {/* Email（備用，不用來登入） */}
         <KioskInput
-          label="Email（登入帳號）"
+          label="Email（備用：忘記密碼時使用）"
           type="email"
           required
           placeholder="請輸入 Email"
@@ -158,6 +205,8 @@ export function NewUserModal({ open, onClose, onSaved, editingUser, lockedToMana
           isValid={Boolean(dirtyFields.email) && !errors.email}
           {...register('email')}
         />
+
+        {/* 密碼（新增模式才顯示） */}
         {!isEditing && (
           <KioskInput
             label="密碼"
@@ -169,44 +218,74 @@ export function NewUserModal({ open, onClose, onSaved, editingUser, lockedToMana
             {...register('password')}
           />
         )}
-        {lockedToManager ? (
-          <p className="rounded-kiosk bg-slate-50 px-4 py-3 text-kiosk-base text-slate-600">
-            角色：店長（經銷商只能開立自己負責區域內的店長帳號）
-          </p>
+
+        {/* 角色選單：鎖定條件 → 自己 or system_admin 帳號 */}
+        {roleIsLocked ? (
+          <div className="rounded-kiosk bg-slate-50 px-4 py-3 text-kiosk-base text-slate-600">
+            角色：<span className="font-semibold">{ROLE_LABEL[editingUser?.role ?? 'staff']}</span>
+            <span className="ml-2 text-sm text-slate-400">（無法在此修改）</span>
+          </div>
         ) : (
           <KioskSelect
             label="角色"
             required
-            options={ASSIGNABLE_ROLES}
+            options={assignableRoles}
             placeholder="請選擇角色"
-            disabled={editingUser?.role === 'system_admin'}
             errorMessage={errors.role?.message}
             isValid={Boolean(dirtyFields.role) && !errors.role}
             {...register('role')}
           />
         )}
-        {role === 'manager' && (
-          <KioskSelect
-            label="所屬分店"
-            required
-            options={stores.map((store) => ({ value: String(store.id), label: `${store.code} ${store.name}` }))}
-            placeholder="請選擇分店"
-            errorMessage={errors.storeId?.message}
-            isValid={Boolean(dirtyFields.storeId) && !errors.storeId}
-            {...register('storeId', { valueAsNumber: true })}
-          />
+
+        {/* 分店（manager / staff / accountant 必填）：manager 自動鎖定自己的分店 */}
+        {(role === 'manager' || role === 'staff' || role === 'accountant') && (
+          isManagerRole ? (
+            <div className="rounded-kiosk bg-slate-50 px-4 py-3 text-kiosk-base text-slate-600">
+              所屬分店：
+              <span className="font-semibold">
+                {stores.find((s) => s.id === lockedStoreId)
+                  ? `${stores.find((s) => s.id === lockedStoreId)!.code} ${stores.find((s) => s.id === lockedStoreId)!.name}`
+                  : `分店 #${lockedStoreId}`}
+              </span>
+              <span className="ml-2 text-sm text-slate-400">（自動指定，不可更改）</span>
+            </div>
+          ) : (
+            <KioskSelect
+              label="所屬分店"
+              required
+              options={stores.map((store) => ({ value: String(store.id), label: `${store.code} ${store.name}` }))}
+              placeholder="請選擇分店"
+              errorMessage={errors.storeId?.message}
+              isValid={Boolean(dirtyFields.storeId) && !errors.storeId}
+              {...register('storeId', { valueAsNumber: true })}
+            />
+          )
         )}
-        {role === 'dealer' && (
-          <KioskSelect
-            label="負責區域"
-            required
-            options={REGION_OPTIONS}
-            placeholder="請選擇區域"
-            errorMessage={errors.region?.message}
-            isValid={Boolean(dirtyFields.region) && !errors.region}
-            {...register('region')}
-          />
+
+        {/* 區域（dealer / general_agent 必填）：總代理建立代理時鎖定為自己的區域 */}
+        {(role === 'dealer' || role === 'general_agent') && (
+          isGeneralAgent && role === 'dealer' ? (
+            <div className="rounded-kiosk bg-slate-50 px-4 py-3 text-kiosk-base text-slate-600">
+              負責區域：
+              <span className="font-semibold">
+                {REGION_OPTIONS.find((r) => r.value === lockedRegion)?.label ?? lockedRegion}
+              </span>
+              <span className="ml-2 text-sm text-slate-400">（自動指定為您的區域，不可更改）</span>
+            </div>
+          ) : (
+            <KioskSelect
+              label="負責區域"
+              required
+              options={REGION_OPTIONS}
+              placeholder="請選擇區域"
+              errorMessage={errors.region?.message}
+              isValid={Boolean(dirtyFields.region) && !errors.region}
+              {...register('region')}
+            />
+          )
         )}
+
+        {/* 電話 */}
         <KioskInput
           label="電話"
           placeholder="請輸入電話（選填）"
@@ -214,6 +293,14 @@ export function NewUserModal({ open, onClose, onSaved, editingUser, lockedToMana
           isValid={Boolean(dirtyFields.phone) && !errors.phone}
           {...register('phone')}
         />
+
+        {/* 啟用/停用（編輯模式） */}
+        {isEditing && (
+          <label className="flex cursor-pointer items-center gap-3 rounded-kiosk border border-slate-200 px-4 py-3">
+            <input type="checkbox" className="h-5 w-5 accent-kiosk-primary" {...register('isActive')} />
+            <span className="text-kiosk-base text-slate-700">帳號啟用中</span>
+          </label>
+        )}
 
         {submitError && (
           <p className="text-kiosk-base font-semibold text-kiosk-danger" role="alert">

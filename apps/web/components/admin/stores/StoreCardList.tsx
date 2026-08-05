@@ -12,9 +12,9 @@ interface StoreCardListProps {
 }
 
 const REGION_LABEL: Record<StoreSummary['region'], string> = {
-  north: '北部',
-  central: '中部',
-  south: '南部',
+  A: '北部',
+  B: '中部',
+  C: '南部',
 };
 
 /** 手機版（<768px）：卡片式列表，重點突出編號與名稱，表格在小螢幕擠成一團很難點 */

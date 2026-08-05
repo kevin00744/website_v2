@@ -79,7 +79,7 @@ interface SignDocumentDto {
  */
 @Controller('customers')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('staff', 'dealer', 'manager')
+@Roles('staff', 'dealer', 'manager', 'general_agent')
 export class CustomersController {
   constructor(
     private readonly customersService: CustomersService,
@@ -277,5 +277,15 @@ export class CustomersController {
     @Body() dto: { amount: number; paymentMethod: string; note?: string },
   ) {
     return this.customersService.topUpWallet(actor, id, dto);
+  }
+
+  /** 舊顧客補簽外泌體使用同意書 */
+  @Post(':id/exosome-consent')
+  signExosomeConsent(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { signatureUrl: string; signaturePoints?: unknown[]; notes?: string },
+  ) {
+    return this.customersService.signExosomeConsent(actor, id, dto);
   }
 }

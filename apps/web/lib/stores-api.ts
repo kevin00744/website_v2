@@ -32,8 +32,8 @@ export function deleteStore(id: number): Promise<void> {
 export function updateStoreStaff(
   storeId: number,
   staffId: number,
-  input: { name?: string; email?: string; isActive?: boolean },
-): Promise<{ id: number; name: string; email: string; isActive: boolean }> {
+  input: { name?: string; username?: string; password?: string; isActive?: boolean },
+): Promise<{ id: number; username: string; name: string; isActive: boolean }> {
   return apiRequest(`/stores/${storeId}/staff/${staffId}`, { method: 'PATCH', json: input });
 }
 
@@ -49,8 +49,8 @@ export function updateStoreFeatures(storeId: number, features: Record<string, bo
 
 export interface StoreStaffMember {
   id: number;
+  username: string;
   name: string;
-  email: string;
   role: string;
   storeId: number | null;
   isActive: boolean;
@@ -64,7 +64,7 @@ export function listStoreStaff(storeId: number): Promise<StoreStaffMember[]> {
 /** 建立分店員工帳號（role 由後端強制鎖定為 staff） */
 export function createStoreStaff(
   storeId: number,
-  input: { name: string; email: string; password: string },
+  input: { name: string; username: string; password: string },
 ): Promise<StoreStaffMember> {
   return apiRequest<StoreStaffMember>(`/stores/${storeId}/staff`, { method: 'POST', json: input });
 }
