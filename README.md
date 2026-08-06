@@ -1,6 +1,6 @@
 # 璨妍 ERP 後台管理系統
 
-> 版本：website_v2　｜　最後更新：2026-08-04
+> 版本：website_v2　｜　最後更新：2026-08-05
 
 ---
 
@@ -30,7 +30,7 @@
 - 打卡與出勤統計
 - 財務帳務與備用金獨立管理
 - 支出管理、外包項目雙軌記錄
-- 即時通訊（庫存請求頻道）
+- 即時通訊（內部訊息）
 - 聯絡訊息管理
 - 促銷方案管理
 - 分店功能開關（Feature Toggle）
@@ -108,13 +108,13 @@ website_v2/
 │   │       ├── chat/                 # 即時通訊（WebSocket）
 │   │       ├── common/               # 共用工具（upload.util、AppError、filters）
 │   │       ├── contact/              # 聯絡訊息
+│   │       ├── customer-courses/     # 課程退費轉儲值、課程轉換
 │   │       ├── customers/            # 顧客、療程紀錄、同意書、錢包、課程
 │   │       ├── financial/            # 財務帳務（收入/支出）
 │   │       ├── inventory/            # 庫存管理、補貨請求
 │   │       ├── petty-cash/           # 備用金（獨立系統）
 │   │       ├── prisma/               # PrismaService
 │   │       ├── promotion-plans/      # 促銷方案
-│   │       ├── rbac/                 # 角色存取控制
 │   │       ├── service-items/        # 服務品項
 │   │       ├── service-records/      # POS 服務紀錄
 │   │       ├── signature/            # 電子簽名
@@ -127,7 +127,7 @@ website_v2/
 │       │   └── (admin)/              # 後台頁面群組
 │       │       ├── admin/            # 後台首頁 shell
 │       │       ├── attendance/       # 打卡頁
-│       │       ├── chat-contacts/    # 聊天清單管理
+│       │       ├── chat-contacts/    # 聊天清單管理（admin 專用）
 │       │       ├── contact-categories/
 │       │       ├── contact-messages/
 │       │       ├── customers/        # 顧客資料（含 POS 結帳入口）
@@ -138,19 +138,19 @@ website_v2/
 │       │       ├── manager-dashboard/# 考勤 & 業績
 │       │       ├── petty-cash/       # 備用金管理
 │       │       ├── promotion-plans/
-│       │       ├── settings/         # 個人設定
+│       │       ├── settings/         # 個人設定（姓名/Email/帳號/電話/密碼）
 │       │       ├── store-service-items/
 │       │       ├── store-settings/   # 分店功能設定
-│       │       ├── store-staff/      # 員工帳號管理
+│       │       ├── store-staff/      # 員工帳號管理（店長專用）
 │       │       ├── stores/           # 分店管理
 │       │       └── users/            # 帳號管理
 │       ├── components/
 │       │   ├── admin/
 │       │   │   ├── customers/        # POS、顧客詳情、療程紀錄、簽名等
 │       │   │   ├── kiosk/            # 共用 UI 元件（KioskButton、KioskInput…）
-│       │   │   └── AdminShell.tsx    # 側欄導覽 shell
+│       │   │   └── AdminShell.tsx    # 側欄導覽 shell（含內部訊息按鈕）
 │       │   └── shared/
-│       ├── hooks/                    # useStoreFeatures 等自訂 hook
+│       ├── hooks/
 │       └── lib/
 │           ├── api-client.ts         # apiRequest + resolveApiBaseUrl
 │           ├── auth.ts               # JWT cookie 存取
@@ -171,7 +171,7 @@ website_v2/
 ### 使用者與分店
 
 ```
-User               分店員工帳號（role、storeId、region）
+User               帳號（username 登入、role、storeId、region、parentId、dealerId）
 Store              分店（含 pettyCashBalance、features JSON）
 ```
 
@@ -228,10 +228,10 @@ AttendanceLog      上下班打卡紀錄（storeId、userId、type、時間）
 ### 即時通訊
 
 ```
-Conversation       對話（庫存請求/顧客詢問/一般聊天）
+Conversation       對話串（一對一）
 ConversationParticipant
 Message            訊息（含 MessageStatus: sent/delivered/read）
-ChatContactPermission
+ChatContactPermission  可覆寫各角色的預設聯絡人清單（admin 管理）
 ```
 
 ### 其他
@@ -248,22 +248,76 @@ DisclaimerTemplate 同意書範本
 
 ## 6. 角色與權限
 
+### 角色定義
+
 | 角色 | 說明 | 管轄範圍 |
 |------|------|---------|
-| `system_admin` | 系統最高權限 | 全部 |
-| `admin` | 總部管理員 | 全部 |
-| `dealer` | 區域代理商 | 自己負責的區域（north/central/south） |
-| `manager` | 店長 | 自己所屬分店 |
+| `system_admin` | 系統最高權限 | 全部，不受任何限制 |
+| `admin` | 總部管理員 | 全部，不受任何限制 |
+| `general_agent` | 總代理 | 自己負責的區域（A/B/C），可建立區域代理帳號 |
+| `dealer` | 區域代理 | 自己負責的區域（A/B/C） |
+| `manager` | 店長 | 自己所屬分店，可建立員工/會計帳號 |
+| `accountant` | 會計 | 自己所屬分店（限財務/考勤功能） |
 | `staff` | 員工 | 自己所屬分店（受限功能） |
-| `editor` | 編輯（已無用途，保留相容） | — |
+
+### 帳號建立矩陣（CREATOR_CAN_ASSIGN）
+
+| 建立者 | 可建立的角色 |
+|--------|------------|
+| `system_admin` | 所有角色 |
+| `admin` | general_agent、dealer、manager、staff、accountant |
+| `general_agent` | dealer（限自己區域） |
+| `dealer` | manager、staff、accountant |
+| `manager` | staff、accountant（限自己分店，自動指派） |
+
+### 區域代碼
+
+| 代碼 | 區域 |
+|------|------|
+| `A` | 北部 |
+| `B` | 中部 |
+| `C` | 南部 |
 
 ### RBAC 規則
 
 - 後端每個 Controller 以 `@Roles(...)` decorator 宣告最低需求角色
 - `JwtAuthGuard` + `RolesGuard` 自動攔截
+- `system_admin` / `admin` 一律放行（isAdminRole 超集語意）
+- `general_agent` / `dealer` 可跨分店，但限制在自己的 region
 - `manager` 只能操作**自己分店**的資料（service 層 assertXxxAccess 驗證）
-- `dealer` 可跨分店但限制在自己的 region
-- `admin` / `system_admin` 無任何資料範圍限制
+- `accountant` 只能存取財務帳務、考勤&業績、個人設定、內部訊息
+
+### 各角色可見頁面
+
+| 頁面 | system_admin | admin | general_agent | dealer | manager | accountant | staff |
+|------|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| 顧客資料 | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| 庫存管理 | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| 打卡 | ✓ | ✓ | — | — | ✓ | — | ✓ |
+| 考勤 & 業績 | ✓ | ✓ | — | — | ✓ | ✓ | — |
+| 財務帳務 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | — |
+| 備用金管理 | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| 支出管理 | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| 分店管理 | ✓ | ✓ | ✓ | ✓ | — | — | — |
+| 分店功能設定 | ✓ | ✓ | — | — | ✓ | — | — |
+| 員工帳號管理 | — | — | — | — | ✓ | — | — |
+| 服務品項管理 | ✓ | ✓ | — | — | ✓ | — | — |
+| 促銷方案管理 | ✓ | ✓ | — | — | ✓ | — | — |
+| 聯絡訊息 | ✓ | ✓ | ✓ | ✓ | ✓ | — | — |
+| 詢問類別管理 | ✓ | ✓ | — | — | — | — | — |
+| 帳號管理 | ✓ | ✓ | ✓ | ✓ | — | — | — |
+| 聊天清單管理 | ✓ | ✓ | — | — | — | — | — |
+| 內部訊息 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 個人設定 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+### 內部訊息聯絡對象
+
+| 角色 | 可聯絡對象 |
+|------|-----------|
+| system_admin / admin | 所有 dealer、manager、admin、system_admin |
+| general_agent / dealer | 自己區域的所有店長 + 所有 admin/system_admin |
+| manager | 自己分店的 staff + 所在區域的 dealer/general_agent + 所有 admin/system_admin |
+| staff / accountant | 自己分店的店長 + 所有 admin/system_admin |
 
 ---
 
@@ -271,12 +325,24 @@ DisclaimerTemplate 同意書範本
 
 ### `auth`
 
-- `POST /api/v2/auth/login` — 登入，回傳 JWT + user 資訊（含 `storeFeatures`）
+- `POST /api/v2/auth/login` — **username** 登入，回傳 JWT + user 資訊（含 `storeFeatures`）
 - `GET /api/v2/auth/me` — 驗證 token，即時從 DB 查詢 storeFeatures
+
+### `users`
+
+- `GET /api/v2/users` — 列出帳號（各角色依權限範圍自動篩選）
+- `POST /api/v2/users` — 建立帳號（依 CREATOR_CAN_ASSIGN 矩陣）
+- `PATCH /api/v2/users/me` — 自己修改個人資料（姓名/Email/帳號/電話/密碼）
+- `PATCH /api/v2/users/:id` — 管理員修改他人資料
+- `PATCH /api/v2/users/:id/password` — 強制重設密碼（不需舊密碼）
+- `DELETE /api/v2/users/:id` — 軟刪除帳號
+
+> **員工帳號**（store-staff）與一般帳號管理（users）共用相同 API，但店長建立帳號時 storeId 自動鎖定為自己的分店。
 
 ### `stores`
 
 - CRUD 分店
+- `GET /api/v2/stores` — 列出分店（dealer/general_agent 只看自己區域）
 - `PATCH /api/v2/stores/:id/features` — 更新分店功能開關（`{ pos, attendance, crm }`）
 
 ### `customers`
@@ -285,6 +351,7 @@ DisclaimerTemplate 同意書範本
 - 療程紀錄 + 照片上傳（`/api/v2/uploads/:filename` 靜態伺服）
 - 同意書電子簽名流程
 - 顧客錢包、課程堂數管理
+- **課程合併顯示**：前端將相同服務項目的多張課程合併成一筆顯示，POS 結帳自動扣最舊的課程
 
 ### `service-records`
 
@@ -295,7 +362,8 @@ DisclaimerTemplate 同意書範本
 
 ### `financial`
 
-- `GET/POST /api/v2/stores/:storeId/financial` — 財務帳務（僅收入/支出）
+- `GET/POST /api/v2/financial/stores/:storeId/records` — 財務帳務
+- `GET /api/v2/financial/stores/:storeId/daily-balance` — 當日帳務摘要
 - 外包支付自動同時寫入 `PettyCashLog`（`outsource_deduct`）
 
 ### `petty-cash`（獨立系統）
@@ -307,37 +375,44 @@ DisclaimerTemplate 同意書範本
 ### `inventory`
 
 - 庫存查詢、商品使用記錄
-- 補貨請求（RestockRequest）流程
+- 補貨請求（RestockRequest）流程：分店申請 → dealer/general_agent 確認完成
 
 ### `attendance`
 
 - 打卡（上班/下班）
-- 考勤與業績統計
+- 考勤與業績統計（manager/accountant 可查）
+
+### `chat`
+
+- `GET /api/v2/chat/contacts` — 取得聯絡人清單（依角色自動篩選）
+- `GET /api/v2/chat/conversations` — 我的對話列表
+- `POST /api/v2/chat/conversations` — 開始與某人的對話
+- WebSocket：即時訊息推送、未讀數更新
 
 ---
 
 ## 8. 前端頁面說明
 
-| 路徑 | 頁面名稱 | 最低角色 |
-|------|---------|---------|
-| `/admin/login` | 登入 | 無 |
-| `/admin/customers` | 顧客資料 | staff |
-| `/admin/inventory` | 庫存管理 | manager |
-| `/admin/attendance` | 打卡 | staff（需分店啟用） |
-| `/admin/manager-dashboard` | 考勤 & 業績 | manager（需分店啟用） |
-| `/admin/stores` | 分店管理 | dealer |
-| `/admin/store-settings` | 分店功能設定 | manager |
-| `/admin/store-staff` | 員工帳號管理 | manager |
-| `/admin/financial` | 財務帳務 | manager |
-| `/admin/petty-cash` | 備用金管理 | manager |
-| `/admin/expenses` | 支出管理 | staff（需分店啟用） |
-| `/admin/store-service-items` | 服務品項管理 | manager（需分店啟用） |
-| `/admin/promotion-plans` | 促銷方案管理 | manager |
-| `/admin/contact-messages` | 聯絡訊息 | manager |
-| `/admin/contact-categories` | 詢問類別管理 | admin |
-| `/admin/users` | 帳號管理 | dealer |
-| `/admin/chat-contacts` | 聊天清單管理 | admin |
-| `/admin/settings` | 個人設定 | 所有人 |
+| 路徑 | 頁面名稱 | 可存取角色 |
+|------|---------|-----------|
+| `/login` | 登入 | 無 |
+| `/customers` | 顧客資料 | staff、manager、dealer、general_agent、admin、system_admin |
+| `/inventory` | 庫存管理 | manager、dealer、general_agent、admin、system_admin |
+| `/attendance` | 打卡 | staff、manager、admin、system_admin（需分店啟用） |
+| `/manager-dashboard` | 考勤 & 業績 | manager、accountant、admin、system_admin（需分店啟用） |
+| `/financial` | 財務帳務 | manager、accountant、dealer、general_agent、admin、system_admin |
+| `/petty-cash` | 備用金管理 | manager、dealer、general_agent、admin、system_admin |
+| `/expenses` | 支出管理 | staff、manager、dealer、general_agent、admin、system_admin（需分店啟用） |
+| `/stores` | 分店管理 | dealer、general_agent、admin、system_admin |
+| `/store-settings` | 分店功能設定 | manager、admin、system_admin |
+| `/store-staff` | 員工帳號管理 | manager（專用） |
+| `/store-service-items` | 服務品項管理 | manager、admin、system_admin（需分店啟用） |
+| `/promotion-plans` | 促銷方案管理 | manager、admin、system_admin |
+| `/contact-messages` | 聯絡訊息 | dealer、general_agent、manager、admin、system_admin |
+| `/contact-categories` | 詢問類別管理 | admin、system_admin |
+| `/users` | 帳號管理 | dealer、general_agent、admin、system_admin |
+| `/chat-contacts` | 聊天清單管理 | admin、system_admin |
+| `/settings` | 個人設定 | 所有角色 |
 
 ### POS 結帳流程（`POSCheckoutModal`）
 
@@ -347,9 +422,10 @@ DisclaimerTemplate 同意書範本
    - 顯示固定定價（不可修改）
    - 可新增多種付款方式（現金、轉帳、LINE Pay、信用卡），合計必須等於定價
    - 若金額不符 → 按鈕禁用 + 顯示差額
-4. 顧客電子簽名
-5. 送出 → 後端驗證價格一致性（422 若不符）
-6. 結帳完成 → 自動切換到「使用紀錄」tab 顯示 POS 服務紀錄
+4. 課程扣堂時：若同一服務項目有多張課程，前端合併顯示總堂數，後端自動扣最舊課程
+5. 顧客電子簽名
+6. 送出 → 後端驗證價格一致性（422 若不符）
+7. 結帳完成 → 自動切換到「使用紀錄」tab
 
 ---
 
@@ -365,8 +441,8 @@ export type FeatureKey = 'pos' | 'attendance' | 'crm';
 export interface NavItem {
   href: string;
   label: string;
-  featureKey?: FeatureKey;      // 需分店啟用此功能才顯示
-  roleGuard?: (role) => boolean; // 角色守門
+  featureKey?: FeatureKey;       // 需分店啟用此功能才顯示
+  roleGuard?: (role) => boolean; // 角色守門（未設定則所有人可見）
 }
 ```
 
@@ -374,8 +450,14 @@ export interface NavItem {
 
 - `admin` / `system_admin` **永遠通過** feature gate
 - 其他角色：需要 `Store.features[key] === true`
-- 分店 features 在**登入時**由後端查詢 DB 後放入 JWT user payload
+- 分店 features 在**登入時**由後端查詢 DB 後放入 user payload
 - 店長可在「分店功能設定」頁即時調整，更新後立即反映（不需重新登入）
+
+### 內部訊息（Chat）
+
+- 側欄固定顯示「內部訊息」按鈕（所有登入角色皆可見）
+- 不在 `navigationConfig` 管理，而是在 `AdminShell.tsx` 直接渲染 `ChatInboxModal`
+- 未讀數即時更新（WebSocket）
 
 ---
 
@@ -392,25 +474,28 @@ cd website_v2
 docker compose up -d
 ```
 
-### 啟動 API dev server
+### 啟動 API（watch 模式）
 
 ```bash
 docker exec -d website_v2_api sh -c \
-  "cd /workspace/apps/api && npm run start:dev > /tmp/api.log 2>&1"
+  "cd /workspace/apps/api && node_modules/.bin/nest start --watch > /tmp/api.log 2>&1"
 
 # 查看 log
 docker exec website_v2_api sh -c "tail -f /tmp/api.log"
 ```
 
-### 啟動 Web dev server
+### 啟動 Web（production build）
 
 ```bash
-docker exec -d website_v2_web sh -c \
-  "cd /workspace/apps/web && npm run dev > /tmp/web.log 2>&1"
+# Build
+docker exec website_v2_web sh -c "cd /workspace/apps/web && npm run build"
 
-# 查看 log
-docker exec website_v2_web sh -c "tail -f /tmp/web.log"
+# Start
+docker exec -d website_v2_web sh -c \
+  "cd /workspace/apps/web && npx next start -p 3000 > /tmp/web.log 2>&1"
 ```
+
+> **注意**：每次修改前端程式碼後需重新 build + 重啟 next start 才會套用。API 使用 watch 模式，存檔後自動重新編譯。
 
 ### 連線位置
 
@@ -420,52 +505,41 @@ docker exec website_v2_web sh -c "tail -f /tmp/web.log"
 | API | http://localhost:3101/api/v2 |
 | 資料庫 | localhost:5433（DB: website_v2, user: website_v2_user） |
 
-### 資料庫 Migration
+### 資料庫直接操作
 
 ```bash
-docker exec website_v2_api sh -c \
-  "cd /workspace/apps/api && npx prisma migrate dev --name <migration_name>"
+docker exec website_v2_db psql -U website_v2_user -d website_v2 -c "SELECT ..."
 ```
 
 ### 型別檢查
 
 ```bash
 # 後端
-docker exec website_v2_api sh -c \
-  "cd /workspace/apps/api && npx tsc --noEmit"
+docker exec website_v2_api sh -c "cd /workspace/apps/api && npx tsc --noEmit"
 
 # 前端
-docker exec website_v2_web sh -c \
-  "cd /workspace/apps/web && npx tsc --noEmit"
-```
-
-### 建立系統管理員帳號
-
-```javascript
-// 建立 script 並複製到容器執行
-const { PrismaClient } = require('/workspace/apps/api/node_modules/@prisma/client');
-const bcrypt = require('/workspace/node_modules/bcryptjs');
-const prisma = new PrismaClient({
-  datasources: { db: { url: 'postgresql://website_v2_user:secret@db:5432/website_v2' } }
-});
-async function main() {
-  const hash = await bcrypt.hash('your_password', 10);
-  const user = await prisma.user.create({
-    data: { email: 'admin@example.com', password: hash, name: 'Admin', role: 'system_admin' }
-  });
-  console.log('建立成功 id:', user.id);
-}
-main().catch(console.error).finally(() => prisma.$disconnect());
-```
-
-```bash
-docker cp create_user.js website_v2_api:/tmp/
-docker exec website_v2_api node /tmp/create_user.js
+docker exec website_v2_web sh -c "cd /workspace/apps/web && npx tsc --noEmit"
 ```
 
 ---
 
 ## 11. 已完成功能清單
+
+### 認證與帳號系統
+- [x] Username（帳號）登入，不使用 Email 登入
+- [x] JWT + Cookie 認證
+- [x] 8 種角色 RBAC（system_admin / admin / general_agent / dealer / manager / accountant / staff / editor）
+- [x] 帳號建立矩陣（不同角色能建立不同下屬角色）
+- [x] 北/中/南三區（A/B/C）區域代碼
+- [x] 個人設定：自行修改姓名、Email、帳號、電話、密碼
+- [x] 管理員強制重設密碼（不需舊密碼）
+- [x] 帳號軟刪除
+
+### 分店管理
+- [x] 分店 CRUD（含區域編號自動產生，格式：A01/B02/C03…）
+- [x] 分店功能開關（pos / attendance / crm）
+- [x] dealer/general_agent 只看自己區域的分店
+- [x] 員工帳號管理（店長專用頁面，建立時自動指派自己的分店）
 
 ### 顧客管理
 - [x] 顧客建立（姓名 + 身分證字號終身鎖定）
@@ -480,12 +554,13 @@ docker exec website_v2_api node /tmp/create_user.js
 - [x] 多重付款方式（現金、轉帳、LINE Pay、信用卡）
 - [x] 定價一致性強制驗證（前後端雙層）
 - [x] 顧客電子簽名
+- [x] 同服務項目多張課程合併顯示，POS 自動扣最舊課程
 - [x] POS 紀錄顯示於顧客使用紀錄
 
 ### 庫存
 - [x] 各分店庫存查詢
 - [x] 商品使用記錄
-- [x] 補貨請求流程（分店申請 → 總部核准）
+- [x] 補貨請求流程（分店申請 → dealer/general_agent 確認完成）
 - [x] 庫存調撥（分店間轉移）
 
 ### 財務
@@ -497,17 +572,18 @@ docker exec website_v2_api node /tmp/create_user.js
 ### 打卡 / 考勤
 - [x] 上下班打卡
 - [x] 月份考勤統計
-- [x] 業績統計（店長 dashboard）
+- [x] 業績統計（店長/會計 dashboard）
 
-### 分店管理
-- [x] 分店 CRUD
-- [x] 分店功能開關（pos / attendance / crm）
-- [x] 員工帳號管理（分店層級）
+### 即時通訊
+- [x] 一對一聊天（WebSocket）
+- [x] 未讀數即時更新
+- [x] 依角色自動建立聯絡人清單（dealer/general_agent：區域店長+admin；staff/accountant：自己店長+admin）
+- [x] admin 可覆寫任何帳號的聯絡人清單
 
-### 系統
-- [x] JWT 認證 + Cookie
-- [x] RBAC 角色守門（6 個角色）
+### 其他
 - [x] 動態 API URL（不寫死 localhost）
-- [x] 打卡頁 SSR 水合錯誤修正
-- [x] 根路徑重導向 `/admin/login`
+- [x] Feature Gate（分店功能開關控制導覽顯示）
+- [x] 根路徑重導向 `/login`
 - [x] 靜態檔案伺服（`/api/v2/uploads/`）
+- [x] 聯絡訊息管理（含轉發給分店功能）
+- [x] 促銷方案管理
