@@ -18,6 +18,8 @@ const USER_SELECT = {
   dealerId: true,
   parentId: true,
   store: { select: { name: true } },
+  dealer: { select: { id: true, name: true } },
+  parent: { select: { id: true, name: true } },
 } satisfies Prisma.UserSelect;
 
 type UserRow = Prisma.UserGetPayload<{ select: typeof USER_SELECT }>;
@@ -34,7 +36,9 @@ export interface UserSummary {
   region: Region | null;
   isActive: boolean;
   dealerId: number | null;
+  dealerName: string | null;
   parentId: number | null;
+  creatorName: string | null;
 }
 
 interface CreateUserInput {
@@ -85,8 +89,8 @@ export class UsersService {
     let where: Prisma.UserWhereInput = { deletedAt: null };
 
     if (actor.role === 'general_agent') {
-      // 總代理只看自己底下的 dealer
-      where = { deletedAt: null, role: 'dealer', parentId: actor.id };
+      // 總代理看同區域的所有 dealer（不限自己建立的）
+      where = { deletedAt: null, role: 'dealer', region: actor.region ?? 'NONE' as Region };
     } else if (actor.role === 'dealer') {
       // dealer 看自己底下的 manager/staff/accountant
       where = { deletedAt: null, dealerId: actor.id };
@@ -127,12 +131,15 @@ export class UsersService {
     const existingEmail = await this.prisma.user.findFirst({ where: { email, deletedAt: null } });
     if (existingEmail) throw new AppError('USER_EMAIL_EXISTS', `email ${email} already exists`, 409);
 
-    if (input.role === 'manager' && input.storeId) {
+    // Lookup store for storeId-based roles to validate and auto-set region
+    let storeRegion: Region | null = null;
+    if ((input.role === 'manager' || input.role === 'staff' || input.role === 'accountant') && input.storeId) {
       const store = await this.prisma.store.findFirst({ where: { id: input.storeId, deletedAt: null } });
       if (!store) throw new AppError('STORE_NOT_FOUND', 'selected store does not exist', 404);
       if ((actor.role === 'dealer' || actor.role === 'general_agent') && store.region !== actor.region) {
         throw new AppError('STORE_NOT_IN_REGION', "selected store is outside dealer's region", 403);
       }
+      storeRegion = store.region;
     }
 
     // 總代理只能在自己區域內開設代理帳號，且自動填入區域
@@ -166,7 +173,7 @@ export class UsersService {
         password: passwordHash,
         role: input.role,
         storeId: (input.role === 'manager' || input.role === 'staff' || input.role === 'accountant') ? (input.storeId ?? null) : null,
-        region: input.role === 'dealer' ? (input.region ?? null) : null,
+        region: (input.role === 'dealer' || input.role === 'general_agent') ? (input.region ?? null) : storeRegion,
         phone: input.phone,
         parentId: actor.id,
         dealerId,
@@ -204,6 +211,14 @@ export class UsersService {
       input.region ?? target.region ?? undefined,
     );
 
+    // Auto-set region from store for store-based roles
+    let updatedStoreRegion: Region | null | undefined = undefined;
+    const effectiveStoreId = input.storeId ?? target.storeId;
+    if ((nextRole === 'manager' || nextRole === 'staff' || nextRole === 'accountant') && effectiveStoreId) {
+      const store = await this.prisma.store.findFirst({ where: { id: effectiveStoreId, deletedAt: null } });
+      if (store) updatedStoreRegion = store.region;
+    }
+
     // 檢查 username 唯一性
     if (input.username) {
       const u = input.username.trim();
@@ -228,7 +243,7 @@ export class UsersService {
         storeId: (nextRole === 'manager' || nextRole === 'staff' || nextRole === 'accountant')
           ? (input.storeId ?? target.storeId)
           : null,
-        region: nextRole === 'dealer' ? (input.region ?? target.region) : null,
+        region: (nextRole === 'dealer' || nextRole === 'general_agent') ? (input.region ?? target.region) : (updatedStoreRegion !== undefined ? updatedStoreRegion : null),
         phone: input.phone,
         isActive: input.isActive,
       },
@@ -301,6 +316,17 @@ export class UsersService {
     }
   }
 
+  async assignUserDealer(userId: number, dealerId: number | null): Promise<UserSummary> {
+    const user = await this.prisma.user.findFirst({ where: { id: userId, deletedAt: null } });
+    if (!user) throw new AppError('USER_NOT_FOUND', '找不到此帳號', 404);
+    if (dealerId !== null) {
+      const dealer = await this.prisma.user.findFirst({ where: { id: dealerId, deletedAt: null, role: 'dealer' } });
+      if (!dealer) throw new AppError('DEALER_NOT_FOUND', '找不到此代理帳號', 404);
+    }
+    const updated = await this.prisma.user.update({ where: { id: userId }, data: { dealerId }, select: USER_SELECT });
+    return toSummary(updated);
+  }
+
   private assertRoleFieldsValid(role: Role, storeId?: number, region?: Region) {
     if (role === 'manager' && !storeId) {
       throw new AppError('USER_STORE_REQUIRED', 'manager requires a storeId', 400);
@@ -325,6 +351,8 @@ function toSummary(user: UserRow): UserSummary {
     region: user.region,
     isActive: user.isActive,
     dealerId: user.dealerId,
+    dealerName: user.dealer?.name ?? null,
     parentId: user.parentId,
+    creatorName: user.parent?.name ?? null,
   };
 }

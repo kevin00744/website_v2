@@ -280,10 +280,10 @@ export class ChatService {
     return contacts;
   }
 
-  /** 給 admin 管理畫面用：可以被設定清單的對象（dealer/manager），以及可以被勾選進清單的候選人（含 admin/system_admin） */
+  /** 給 admin 管理畫面用：可以被設定清單的對象（dealer/general_agent/manager），以及可以被勾選進清單的候選人（含 admin/system_admin） */
   async listManageableUsers() {
     return this.prisma.user.findMany({
-      where: { deletedAt: null, isActive: true, role: { in: ['dealer', 'manager', 'admin', 'system_admin'] } },
+      where: { deletedAt: null, isActive: true, role: { in: ['dealer', 'general_agent', 'manager', 'admin', 'system_admin'] } },
       select: { id: true, name: true, role: true, region: true, storeId: true },
       orderBy: [{ role: 'asc' }, { name: 'asc' }],
     });
@@ -297,10 +297,10 @@ export class ChatService {
     if (!target) {
       throw new AppError('USER_NOT_FOUND', `user ${targetUserId} not found`, 404);
     }
-    if (target.role !== 'dealer' && target.role !== 'manager') {
+    if (target.role !== 'dealer' && target.role !== 'general_agent' && target.role !== 'manager') {
       throw new AppError(
         'CHAT_CONTACT_PERMISSION_NOT_APPLICABLE',
-        'only dealer/manager accounts have a configurable contact list',
+        'only dealer/general_agent/manager accounts have a configurable contact list',
         400,
       );
     }
@@ -332,7 +332,7 @@ export class ChatService {
     const uniqueIds = [...new Set(contactUserIds)].filter((id) => id !== targetUserId);
     if (uniqueIds.length > 0) {
       const validContacts = await this.prisma.user.findMany({
-        where: { id: { in: uniqueIds }, deletedAt: null, isActive: true, role: { in: ['dealer', 'manager', 'admin', 'system_admin'] } },
+        where: { id: { in: uniqueIds }, deletedAt: null, isActive: true, role: { in: ['dealer', 'general_agent', 'manager', 'admin', 'system_admin'] } },
         select: { id: true },
       });
       if (validContacts.length !== uniqueIds.length) {

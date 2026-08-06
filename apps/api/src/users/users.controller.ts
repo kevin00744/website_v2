@@ -74,6 +74,16 @@ export class UsersController {
     return this.usersService.updateUser(actor, id, dto);
   }
 
+  /** 指定（或清除）帳號的負責代理，僅 admin/system_admin 可操作 */
+  @Patch(':id/dealer')
+  @Roles('admin')
+  assignDealer(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { dealerId: number | null },
+  ) {
+    return this.usersService.assignUserDealer(id, dto.dealerId ?? null);
+  }
+
   @Patch(':id/password')
   resetPassword(
     @CurrentUser() actor: AuthenticatedUser,

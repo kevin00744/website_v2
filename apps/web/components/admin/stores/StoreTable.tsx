@@ -9,6 +9,8 @@ interface StoreTableProps {
   onDelete?: (store: StoreSummary) => void;
   deletingId?: number;
   onEdit?: (store: StoreSummary) => void;
+  onAssignDealer?: (store: StoreSummary) => void;
+  canAssignDealer?: boolean;
 }
 
 const REGION_LABEL: Record<StoreSummary['region'], string> = {
@@ -17,7 +19,7 @@ const REGION_LABEL: Record<StoreSummary['region'], string> = {
   C: '南部',
 };
 
-export function StoreTable({ stores, onToggleStatus, togglingId, canToggleStatus, onDelete, deletingId, onEdit }: StoreTableProps) {
+export function StoreTable({ stores, onToggleStatus, togglingId, canToggleStatus, onDelete, deletingId, onEdit, onAssignDealer, canAssignDealer }: StoreTableProps) {
   return (
     <table className="hidden w-full border-separate border-spacing-y-3 md:table">
       <thead>
@@ -27,6 +29,7 @@ export function StoreTable({ stores, onToggleStatus, togglingId, canToggleStatus
           <th className="px-4">所屬區域</th>
           <th className="px-4">分店電話</th>
           <th className="px-4">地址</th>
+          {canAssignDealer && <th className="px-4">負責代理</th>}
           <th className="px-4">狀態</th>
           <th className="px-4" />
         </tr>
@@ -39,6 +42,16 @@ export function StoreTable({ stores, onToggleStatus, togglingId, canToggleStatus
             <td className="px-4 py-5">{REGION_LABEL[store.region]}</td>
             <td className="px-4 py-5">{store.phone ?? '—'}</td>
             <td className="px-4 py-5">{store.address ?? '—'}</td>
+            {canAssignDealer && (
+              <td className="px-4 py-5">
+                <button
+                  onClick={() => onAssignDealer?.(store)}
+                  className="text-kiosk-base text-slate-500 underline-offset-2 hover:text-kiosk-primary hover:underline"
+                >
+                  {store.dealerName ?? '— 未指定'}
+                </button>
+              </td>
+            )}
             <td className="px-4 py-5">
               <span
                 className={`rounded-kiosk px-3 py-1 font-semibold ${

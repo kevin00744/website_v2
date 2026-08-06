@@ -29,6 +29,7 @@ export function CustomerTable({ customers, onSelect }: CustomerTableProps) {
           <th className="px-4">顧客編號</th>
           <th className="px-4">區域</th>
           <th className="px-4">分店</th>
+          <th className="px-4">負責代理</th>
           <th className="px-4">建立日期</th>
         </tr>
       </thead>
@@ -45,6 +46,7 @@ export function CustomerTable({ customers, onSelect }: CustomerTableProps) {
             <td className="px-4 py-5 font-mono">{customer.customerCode ?? '—'}</td>
             <td className="px-4 py-5">{REGION_LABEL[customer.region]}</td>
             <td className="px-4 py-5">{customer.storeName}</td>
+            <td className="px-4 py-5 text-slate-500">{customer.dealerName ?? '—'}</td>
             <td className="rounded-r-kiosk px-4 py-5">{formatDate(customer.createdAt)}</td>
           </tr>
         ))}

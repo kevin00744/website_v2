@@ -1,9 +1,11 @@
 import { ROLE_LABEL, type UserSummary } from '@website-v2/shared-types';
 import { KioskButton } from '@/components/admin/kiosk/KioskButton';
+import type { AuthUser } from '@/lib/auth';
 
 interface UserCardListProps {
   users: UserSummary[];
   currentUserId: number;
+  currentUserRole: AuthUser['role'];
   onEdit: (user: UserSummary) => void;
   onResetPassword: (user: UserSummary) => void;
   onToggleActive: (user: UserSummary) => void;
@@ -11,6 +13,8 @@ interface UserCardListProps {
   onDelete: (user: UserSummary) => void;
   deletingId?: number;
   readOnly?: boolean;
+  showCreator?: boolean;
+  onAssignDealer?: (user: UserSummary) => void;
 }
 
 const REGION_LABEL: Record<string, string> = { A: '北部', B: '中部', C: '南部' };
@@ -19,10 +23,10 @@ function canManage(target: UserSummary, currentUserId: number): boolean {
   return target.role !== 'system_admin' || target.id === currentUserId;
 }
 
-/** 手機版（<768px）：卡片式列表，重點突出姓名與角色，表格在小螢幕擠成一團很難點 */
 export function UserCardList({
   users,
   currentUserId,
+  currentUserRole,
   onEdit,
   onResetPassword,
   onToggleActive,
@@ -30,7 +34,11 @@ export function UserCardList({
   onDelete,
   deletingId,
   readOnly,
+  showCreator,
+  onAssignDealer,
 }: UserCardListProps) {
+  const isAdmin = currentUserRole === 'admin' || currentUserRole === 'system_admin';
+
   return (
     <ul className="flex flex-col gap-3 md:hidden">
       {users.map((user) => {
@@ -40,11 +48,26 @@ export function UserCardList({
             <div className="flex items-start justify-between gap-3">
               <div className="flex flex-col gap-1">
                 <span className="text-kiosk-lg font-bold text-slate-900">{user.name}</span>
-                <span className="text-kiosk-base text-slate-600">{user.email}</span>
+                <span className="text-kiosk-base text-slate-500 font-mono">{user.username}</span>
                 <span className="text-kiosk-base text-slate-500">
                   {ROLE_LABEL[user.role]} ·{' '}
                   {user.storeName ?? (user.region ? REGION_LABEL[user.region] : '—')}
                 </span>
+                {isAdmin && (
+                  onAssignDealer ? (
+                    <button
+                      onClick={() => onAssignDealer(user)}
+                      className="text-left text-sm text-slate-400 underline-offset-2 hover:text-kiosk-primary hover:underline"
+                    >
+                      負責代理：{user.dealerName ?? '未指定'}
+                    </button>
+                  ) : user.dealerName ? (
+                    <span className="text-kiosk-base text-slate-400">負責代理：{user.dealerName}</span>
+                  ) : null
+                )}
+                {showCreator && (
+                  <span className="text-kiosk-base text-slate-400">建立者：{user.creatorName ?? '—'}</span>
+                )}
               </div>
               <span
                 className={`shrink-0 rounded-kiosk px-3 py-1 text-kiosk-base font-semibold ${

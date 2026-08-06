@@ -9,10 +9,13 @@ import { getAuthUser, type AuthUser } from '@/lib/auth';
 import {
   deleteCustomer,
   getCustomerDetail,
+  getDisclaimerPdfPath,
+  getExosomeConsentPdfPath,
   listCustomerCourses,
   updateCustomer,
   type CustomerCourseItem,
 } from '@/lib/customers-api';
+import { openPdfInNewTab } from '@/lib/pdf-viewer';
 import { KioskButton } from '../kiosk/KioskButton';
 import { KioskInput } from '../kiosk/KioskInput';
 import { MaskedPhoneInput } from '../kiosk/MaskedInput';
@@ -23,7 +26,6 @@ import { NewTreatmentModal } from './NewTreatmentModal';
 import { POSCheckoutModal } from './POSCheckoutModal';
 import { CourseRefundModal } from './CourseRefundModal';
 import { CourseConvertModal } from './CourseConvertModal';
-import { ExosomeBacksignModal } from './ExosomeBacksignModal';
 
 interface CustomerDetailDrawerProps {
   customerId: number;
@@ -63,7 +65,8 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
   const [treatmentKey, setTreatmentKey] = useState(0);
   const [posModalOpen, setPosModalOpen] = useState(false);
   const [exosomeModalOpen, setExosomeModalOpen] = useState(false);
-  const [exosomeBacksignOpen, setExosomeBacksignOpen] = useState(false);
+  const [exosomePdfError, setExosomePdfError] = useState<string>();
+  const [disclaimerPdfError, setDisclaimerPdfError] = useState<string>();
   const [user, setUser] = useState<AuthUser>();
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string>();
@@ -248,16 +251,47 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
                   簽署日期：{new Date(detail.exosomeConsentSignedAt).toLocaleDateString('zh-TW')}
                 </p>
               )}
-            </div>
-          ) : detail.disclaimerFullySigned ? (
-            /* 已完整簽署（原始簽署流程）→ 提供補簽選項 */
-            <div className="rounded-kiosk border border-green-200 bg-green-50 p-4">
-              <p className="text-kiosk-base font-semibold text-green-700">✓ 外泌體同意書已完成雙方簽署</p>
-              <div className="mt-2">
-                <KioskButton variant="secondary" onClick={() => setExosomeBacksignOpen(true)}>
-                  外泌體補簽同意書
+              <div className="mt-3">
+                <KioskButton
+                  variant="secondary"
+                  onClick={async () => {
+                    setExosomePdfError(undefined);
+                    try {
+                      await openPdfInNewTab(getExosomeConsentPdfPath(customerId));
+                    } catch (err) {
+                      setExosomePdfError(err instanceof Error ? err.message : '開啟 PDF 失敗，請稍後再試');
+                    }
+                  }}
+                >
+                  開新視窗查看同意書 PDF
                 </KioskButton>
               </div>
+              {exosomePdfError && (
+                <p className="mt-2 text-sm font-semibold text-kiosk-danger">⚠️ {exosomePdfError}</p>
+              )}
+            </div>
+          ) : detail.disclaimerFullySigned ? (
+            /* 已完整簽署（原始簽署流程）→ 直接顯示 PDF */
+            <div className="rounded-kiosk border border-green-200 bg-green-50 p-4">
+              <p className="text-kiosk-base font-semibold text-green-700">✓ 外泌體同意書已完成雙方簽署</p>
+              <div className="mt-3">
+                <KioskButton
+                  variant="secondary"
+                  onClick={async () => {
+                    setDisclaimerPdfError(undefined);
+                    try {
+                      await openPdfInNewTab(getDisclaimerPdfPath(customerId));
+                    } catch (err) {
+                      setDisclaimerPdfError(err instanceof Error ? err.message : '開啟 PDF 失敗，請稍後再試');
+                    }
+                  }}
+                >
+                  開新視窗查看同意書 PDF
+                </KioskButton>
+              </div>
+              {disclaimerPdfError && (
+                <p className="mt-2 text-sm font-semibold text-kiosk-danger">⚠️ {disclaimerPdfError}</p>
+              )}
             </div>
           ) : (
             /* 外泌體使用者但未完成簽署（含服務人員已簽、顧客未簽的中間狀態） */
@@ -449,17 +483,6 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
         onClose={() => setExosomeModalOpen(false)}
       />
 
-      <ExosomeBacksignModal
-        open={exosomeBacksignOpen}
-        customerId={customerId}
-        customerName={detail?.name ?? ''}
-        onCompleted={() => {
-          setExosomeBacksignOpen(false);
-          void loadDetail();
-        }}
-        onClose={() => setExosomeBacksignOpen(false)}
-      />
-
       {detail && (
         <POSCheckoutModal
           open={posModalOpen}
@@ -467,6 +490,7 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
           customerId={customerId}
           customerName={detail.name}
           isExosomeUser={detail.isExosomeUser}
+          disclaimerFullySigned={detail.disclaimerFullySigned}
           exosomeConsentSignatureUrl={detail.exosomeConsentSignatureUrl}
           onClose={() => setPosModalOpen(false)}
           onCompleted={() => {

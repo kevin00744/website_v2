@@ -23,17 +23,14 @@ export function middleware(request: NextRequest) {
     const role = readRoleFromCookie(request);
     // 對齊後端 StoresController 的 @Roles('dealer', 'manager')（admin/system_admin 透過 isAdminRole 超集放行）：
     // dealer 也能進分店管理頁面（建店/查清單時自動鎖定在自己負責的區域，manager 不開放）。
-    if (role !== 'admin' && role !== 'system_admin' && role !== 'dealer') {
+    if (role !== 'admin' && role !== 'system_admin' && role !== 'dealer' && role !== 'general_agent') {
       return NextResponse.redirect(new URL('/admin', request.url));
     }
   }
 
   if (token && request.nextUrl.pathname.startsWith('/users')) {
     const role = readRoleFromCookie(request);
-    // 對齊後端 UsersController：GET/POST 額外開放給 dealer（只能開立/查看自己區域的店長帳號），
-    // 編輯/重設密碼/刪除仍然只有 admin/system_admin 能做——dealer 進到這個畫面後，UI 本身只會
-    // 顯示「新增店長帳號」跟唯讀清單，不會出現編輯/刪除按鈕（見 /users/page.tsx 的 readOnly 邏輯）。
-    if (role !== 'admin' && role !== 'system_admin' && role !== 'dealer') {
+    if (role !== 'admin' && role !== 'system_admin' && role !== 'dealer' && role !== 'general_agent') {
       return NextResponse.redirect(new URL('/admin', request.url));
     }
   }
@@ -65,7 +62,7 @@ export function middleware(request: NextRequest) {
   if (token && request.nextUrl.pathname.startsWith('/contact-messages')) {
     const role = readRoleFromCookie(request);
     // 對齊後端 ContactController 的 admin/messages 路由：admin/system_admin/dealer/manager 都能進來（範圍各自限縮）
-    if (role !== 'admin' && role !== 'system_admin' && role !== 'dealer' && role !== 'manager') {
+    if (role !== 'admin' && role !== 'system_admin' && role !== 'dealer' && role !== 'general_agent' && role !== 'manager') {
       return NextResponse.redirect(new URL('/admin', request.url));
     }
   }

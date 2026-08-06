@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
-import type { Region, Store } from '@prisma/client';
+import type { Prisma, Region } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppError } from '../common/errors/app-error';
 import { isAdminRole } from '../auth/role-access.util';
@@ -30,7 +30,10 @@ export interface StoreSummary {
   phone: string | null;
   address: string | null;
   isActive: boolean;
+  dealerId: number | null;
+  dealerName: string | null;
 }
+
 
 @Injectable()
 export class StoresService {
@@ -55,6 +58,7 @@ export class StoresService {
     const stores = await this.prisma.store.findMany({
       where: { deletedAt: null, ...regionFilter, ...(allowInactive ? {} : { isActive: true }) },
       orderBy: [{ region: 'asc' }, { regionSequence: 'asc' }],
+      select: STORE_SELECT,
     });
     return stores.map(toSummary);
   }
@@ -96,14 +100,10 @@ export class StoresService {
 
       return tx.store.create({
         data: {
-          code,
-          name,
-          region: input.region,
-          regionSequence,
-          phone: input.phone,
-          address: input.address,
-          note: input.note,
+          code, name, region: input.region, regionSequence,
+          phone: input.phone, address: input.address, note: input.note,
         },
+        select: STORE_SELECT,
       });
     });
 
@@ -126,6 +126,7 @@ export class StoresService {
         ...(input.address !== undefined ? { address: input.address || null } : {}),
         ...(input.note !== undefined ? { note: input.note || null } : {}),
       },
+      select: STORE_SELECT,
     });
     return toSummary(updated);
   }
@@ -135,7 +136,7 @@ export class StoresService {
     if (!existing) {
       throw new AppError('STORE_NOT_FOUND', `store ${id} not found`, 404);
     }
-    const updated = await this.prisma.store.update({ where: { id }, data: { isActive } });
+    const updated = await this.prisma.store.update({ where: { id }, data: { isActive }, select: STORE_SELECT });
     return toSummary(updated);
   }
 
@@ -278,9 +279,32 @@ export class StoresService {
       orderBy: { name: 'asc' },
     });
   }
+
+  async updateStoreDealer(storeId: number, dealerId: number | null): Promise<StoreSummary> {
+    const store = await this.prisma.store.findFirst({ where: { id: storeId, deletedAt: null } });
+    if (!store) throw new AppError('STORE_NOT_FOUND', '找不到此分店', 404);
+    if (dealerId !== null) {
+      const dealer = await this.prisma.user.findFirst({ where: { id: dealerId, deletedAt: null, role: 'dealer' } });
+      if (!dealer) throw new AppError('DEALER_NOT_FOUND', '找不到此代理帳號', 404);
+    }
+    const updated = await this.prisma.store.update({
+      where: { id: storeId },
+      data: { dealerId },
+      select: STORE_SELECT,
+    });
+    return toSummary(updated);
+  }
 }
 
-function toSummary(store: Store): StoreSummary {
+const STORE_SELECT = {
+  id: true, code: true, name: true, region: true, regionSequence: true,
+  phone: true, address: true, isActive: true, dealerId: true,
+  dealer: { select: { id: true, name: true } },
+} satisfies Prisma.StoreSelect;
+
+type StoreWithDealer = Prisma.StoreGetPayload<{ select: typeof STORE_SELECT }>;
+
+function toSummary(store: StoreWithDealer): StoreSummary {
   return {
     id: store.id,
     code: store.code,
@@ -290,5 +314,7 @@ function toSummary(store: Store): StoreSummary {
     phone: store.phone,
     address: store.address,
     isActive: store.isActive,
+    dealerId: store.dealerId,
+    dealerName: store.dealer?.name ?? null,
   };
 }

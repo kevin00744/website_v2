@@ -133,6 +133,7 @@ export default function StoreStaffPage() {
           <UserTable
             users={users}
             currentUserId={user.id}
+            currentUserRole={user.role}
             onEdit={openEditModal}
             onResetPassword={setResettingUser}
             onToggleActive={handleToggleActive}
@@ -144,6 +145,7 @@ export default function StoreStaffPage() {
           <UserCardList
             users={users}
             currentUserId={user.id}
+            currentUserRole={user.role}
             onEdit={openEditModal}
             onResetPassword={setResettingUser}
             onToggleActive={handleToggleActive}

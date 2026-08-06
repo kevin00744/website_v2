@@ -2,11 +2,12 @@
 type ConversationTypeValue = 'inventory_request' | 'customer_inquiry' | 'general_chat';
 type ConversationStatusValue = 'open' | 'resolved';
 type MessageStatusValue = 'sent' | 'delivered' | 'read';
-type ContactRoleValue = 'dealer' | 'manager' | 'admin' | 'system_admin';
+type ContactRoleValue = 'dealer' | 'general_agent' | 'manager' | 'admin' | 'system_admin';
 type RegionValue = 'north' | 'central' | 'south';
 
 export const CONTACT_ROLE_LABEL: Record<ContactRoleValue, string> = {
-  dealer: '經銷商',
+  dealer: '區域代理',
+  general_agent: '總代理',
   manager: '店長',
   admin: '管理員',
   system_admin: '系統管理員',

@@ -117,6 +117,16 @@ export class StoresController {
     return this.storesService.deleteStoreStaff(actor, id, staffId);
   }
 
+  /** 指定（或清除）分店的負責代理，僅 admin/system_admin 可操作 */
+  @Patch(':id/dealer')
+  @Roles('admin')
+  assignDealer(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { dealerId: number | null },
+  ) {
+    return this.storesService.updateStoreDealer(id, dto.dealerId ?? null);
+  }
+
   /** 更新分店功能開關。manager 限操作自己的分店；admin/system_admin 任意分店 */
   @Patch(':id/features')
   @Roles('manager')

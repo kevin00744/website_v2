@@ -1,30 +1,32 @@
 import { ROLE_LABEL, type UserSummary } from '@website-v2/shared-types';
 import { KioskButton } from '@/components/admin/kiosk/KioskButton';
+import type { AuthUser } from '@/lib/auth';
 
 interface UserTableProps {
   users: UserSummary[];
   currentUserId: number;
+  currentUserRole: AuthUser['role'];
   onEdit: (user: UserSummary) => void;
   onResetPassword: (user: UserSummary) => void;
   onToggleActive: (user: UserSummary) => void;
   togglingId?: number;
   onDelete: (user: UserSummary) => void;
   deletingId?: number;
-  /** dealer 進來看到的是唯讀清單（自己區域的店長帳號），後端編輯/重設密碼/刪除/停用路由本來就還是只開放 admin/system_admin */
   readOnly?: boolean;
+  showCreator?: boolean;
+  onAssignDealer?: (user: UserSummary) => void;
 }
 
 const REGION_LABEL: Record<string, string> = { A: '北部', B: '中部', C: '南部' };
 
-/** system_admin 帳號只能本人自己改，其他人（包含 admin）連編輯/重設密碼按鈕都不顯示，避免點下去得到 403 */
 function canManage(target: UserSummary, currentUserId: number): boolean {
   return target.role !== 'system_admin' || target.id === currentUserId;
 }
 
-/** iPad/桌機版（≥768px）：大氣留白的資料表格，手機版隱藏改用 UserCardList */
 export function UserTable({
   users,
   currentUserId,
+  currentUserRole,
   onEdit,
   onResetPassword,
   onToggleActive,
@@ -32,15 +34,21 @@ export function UserTable({
   onDelete,
   deletingId,
   readOnly,
+  showCreator,
+  onAssignDealer,
 }: UserTableProps) {
+  const isAdmin = currentUserRole === 'admin' || currentUserRole === 'system_admin';
+
   return (
     <table className="hidden w-full border-separate border-spacing-y-3 md:table">
       <thead>
         <tr className="text-left text-kiosk-base text-slate-500">
           <th className="px-4">姓名</th>
-          <th className="px-4">Email</th>
+          <th className="px-4">帳號</th>
           <th className="px-4">角色</th>
           <th className="px-4">所屬分店/區域</th>
+          {isAdmin && <th className="px-4">負責代理</th>}
+          {showCreator && <th className="px-4">建立者</th>}
           <th className="px-4">狀態</th>
           <th className="px-4" />
         </tr>
@@ -51,11 +59,28 @@ export function UserTable({
           return (
             <tr key={user.id} className="rounded-kiosk bg-white text-kiosk-base text-slate-800 shadow-sm">
               <td className="rounded-l-kiosk px-4 py-5 font-semibold">{user.name}</td>
-              <td className="px-4 py-5">{user.email}</td>
+              <td className="px-4 py-5 font-mono text-slate-500">{user.username}</td>
               <td className="px-4 py-5">{ROLE_LABEL[user.role]}</td>
               <td className="px-4 py-5">
                 {user.storeName ?? (user.region ? REGION_LABEL[user.region] : '—')}
               </td>
+              {isAdmin && (
+                <td className="px-4 py-5">
+                  {onAssignDealer ? (
+                    <button
+                      onClick={() => onAssignDealer(user)}
+                      className="text-kiosk-base text-slate-500 underline-offset-2 hover:text-kiosk-primary hover:underline"
+                    >
+                      {user.dealerName ?? '— 未指定'}
+                    </button>
+                  ) : (
+                    <span className="text-slate-500">{user.dealerName ?? '—'}</span>
+                  )}
+                </td>
+              )}
+              {showCreator && (
+                <td className="px-4 py-5 text-slate-500">{user.creatorName ?? '—'}</td>
+              )}
               <td className="px-4 py-5">
                 <span
                   className={`rounded-kiosk px-3 py-1 font-semibold ${

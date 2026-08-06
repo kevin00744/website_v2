@@ -84,9 +84,16 @@ export class CustomerDisclaimerService {
     });
     if (!template) throw new AppError('DISCLAIMER_TEMPLATE_NOT_FOUND', '找不到啟用中的免責聲明書範本', 404);
 
+    // 若顧客還沒有編號且有身分證字號，在 PDF 產生前先算好，確保 PDF 內容包含正確的顧客編號
+    const newCustomerCode =
+      !customer.customerCode && customer.nationalId
+        ? `${customer.store.code}-${customer.nationalId}`
+        : undefined;
+    const effectiveCustomerCode = newCustomerCode ?? customer.customerCode;
+
     const headerData: DisclaimerHeaderData = {
       customerName: customer.name,
-      customerCode: customer.customerCode,
+      customerCode: effectiveCustomerCode,
       nationalId: customer.nationalId ?? '（未填）',
       phone: customer.phone ?? '（未填）',
       address: customer.address ?? '',
@@ -149,6 +156,7 @@ export class CustomerDisclaimerService {
           disclaimerStaffId: actor.id,
           disclaimerPath,
           isExosomeUser: true,
+          ...(newCustomerCode ? { customerCode: newCustomerCode } : {}),
         },
       });
     });
@@ -169,7 +177,10 @@ export class CustomerDisclaimerService {
         disclaimerPath: true,
         disclaimerCustomerSignedAt: true,
         disclaimerStaffSignedAt: true,
-        ...VISIBILITY_SELECT,
+        nationalId: true,
+        customerCode: true,
+        storeId: true,
+        store: { select: { code: true, region: true } },
       },
     });
     if (!customer || !canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
@@ -252,9 +263,17 @@ export class CustomerDisclaimerService {
         },
       });
 
+      const newCustomerCode =
+        !customer.customerCode && customer.nationalId
+          ? `${customer.store.code}-${customer.nationalId}`
+          : undefined;
+
       await tx.customer.update({
         where: { id: customerId },
-        data: { disclaimerCustomerSignedAt: signedAt },
+        data: {
+          disclaimerCustomerSignedAt: signedAt,
+          ...(newCustomerCode ? { customerCode: newCustomerCode } : {}),
+        },
       });
     });
 

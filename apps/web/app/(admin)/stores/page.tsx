@@ -4,12 +4,15 @@ import { useCallback, useEffect, useState } from 'react';
 import type { StoreSummary } from '@website-v2/shared-types';
 import { ApiError } from '@/lib/api-client';
 import { getAuthUser, type AuthUser } from '@/lib/auth';
-import { deleteStore, listStores, setStoreStatus } from '@/lib/stores-api';
+import { assignStoreDealer, deleteStore, listStores, setStoreStatus } from '@/lib/stores-api';
+import { listUsers } from '@/lib/users-api';
+import type { UserSummary } from '@website-v2/shared-types';
 import { KioskButton } from '@/components/admin/kiosk/KioskButton';
 import { StoreCardList } from '@/components/admin/stores/StoreCardList';
 import { StoreTable } from '@/components/admin/stores/StoreTable';
 import { NewStoreModal } from '@/components/admin/stores/NewStoreModal';
 import { EditStoreModal } from '@/components/admin/stores/EditStoreModal';
+import { AssignDealerModal } from '@/components/admin/shared/AssignDealerModal';
 
 /** 對齊 StoresController 的 @Roles('dealer','general_agent')：admin/system_admin/dealer/general_agent 都能進這個頁面 */
 function canManageStores(role: AuthUser['role'] | undefined): boolean {
@@ -38,6 +41,8 @@ export default function StoresPage() {
   const [deletingId, setDeletingId] = useState<number>();
   const [modalOpen, setModalOpen] = useState(false);
   const [editingStore, setEditingStore] = useState<StoreSummary | null>(null);
+  const [assignDealerStore, setAssignDealerStore] = useState<StoreSummary | null>(null);
+  const [allDealers, setAllDealers] = useState<UserSummary[]>([]);
 
   useEffect(() => {
     setUser(getAuthUser());
@@ -110,7 +115,18 @@ export default function StoresPage() {
 
   // 啟用/停用目前後端只開放 admin/system_admin（見 stores.controller.ts），dealer 看得到分店但不能切換狀態
   const canToggleStatus = isAdminRole(user?.role);
+  const canAssignDealer = isAdminRole(user?.role);
   const dealerLockedRegion = (user?.role === 'dealer' || user?.role === 'general_agent') ? user.region ?? undefined : undefined;
+
+  async function openAssignDealer(store: StoreSummary) {
+    setAssignDealerStore(store);
+    if (allDealers.length === 0) {
+      try {
+        const users = await listUsers();
+        setAllDealers(users.filter((u) => u.role === 'dealer' && u.isActive));
+      } catch { /* ignore */ }
+    }
+  }
 
   return (
     <div className="flex flex-col gap-6 pb-24 md:pb-0">
@@ -139,6 +155,8 @@ export default function StoresPage() {
         onDelete={canToggleStatus ? handleDelete : undefined}
         deletingId={deletingId}
         onEdit={canToggleStatus ? (s) => setEditingStore(s) : undefined}
+        canAssignDealer={canAssignDealer}
+        onAssignDealer={canAssignDealer ? openAssignDealer : undefined}
       />
       <StoreCardList
         stores={stores}
@@ -148,6 +166,8 @@ export default function StoresPage() {
         onDelete={canToggleStatus ? handleDelete : undefined}
         deletingId={deletingId}
         onEdit={canToggleStatus ? (s) => setEditingStore(s) : undefined}
+        canAssignDealer={canAssignDealer}
+        onAssignDealer={canAssignDealer ? openAssignDealer : undefined}
       />
 
       {/* 手機版：重點按鈕固定置底，永遠在大拇指範圍內 */}
@@ -171,6 +191,20 @@ export default function StoresPage() {
           setStores((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
           setEditingStore(null);
         }}
+      />
+
+      <AssignDealerModal
+        open={Boolean(assignDealerStore)}
+        targetName={assignDealerStore?.name ?? ''}
+        currentDealerId={assignDealerStore?.dealerId ?? null}
+        dealers={allDealers}
+        onAssign={async (dealerId) => {
+          if (!assignDealerStore) return;
+          const updated = await assignStoreDealer(assignDealerStore.id, dealerId);
+          setStores((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+          setAssignDealerStore(null);
+        }}
+        onClose={() => setAssignDealerStore(null)}
       />
     </div>
   );

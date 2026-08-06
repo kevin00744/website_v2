@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, type Region } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppError } from '../common/errors/app-error';
 import { buildRecordHash, hashJson, MIN_SIGNATURE_POINTS, type SignaturePoint } from '../signature/signature-hash.util';
@@ -15,6 +15,7 @@ import {
 } from './disclaimer-pdf.util';
 import { decodeBase64Png } from './document-pdf.util';
 import { saveCustomerFile } from './customer-file-storage.util';
+import { buildExosomeConsentPdf } from './exosome-consent-pdf.util';
 
 /**
  * 外部列表欄位：基本識別資訊 + 歸屬資訊（區域/分店/顧客編號/建立日期）。
@@ -27,8 +28,10 @@ export interface CustomerListItem {
   phone: string | null;
   nationalId: string | null;
   customerCode: string | null;
+  storeId: number;
   storeName: string;
   region: string;
+  dealerName: string | null;
   createdAt: string;
 }
 
@@ -97,6 +100,7 @@ const LIST_SELECT = {
   phone: true,
   nationalId: true,
   customerCode: true,
+  storeId: true,
   createdAt: true,
   store: { select: { name: true, region: true } },
 } satisfies Prisma.CustomerSelect;
@@ -139,13 +143,21 @@ export class CustomersService {
    * 對 name/phone/national_id 做不分大小寫的模糊搜尋，DB 端已建 pg_trgm GIN index。
    * customerVisibilityWhere(actor) 是跟 controller 上 @Roles guard 平行的第二道防線——
    * 即使有人想辦法繞過前端，經銷商/店長在 API 層也只查得到自己區域/分店的資料。
+   * region / storeId 可選：由前端篩選器傳入，在 actor 的可見範圍內進一步縮小結果。
    */
-  async searchCustomers(actor: AuthenticatedUser, search?: string): Promise<CustomerListItem[]> {
+  async searchCustomers(
+    actor: AuthenticatedUser,
+    search?: string,
+    region?: Region,
+    storeId?: number,
+  ): Promise<CustomerListItem[]> {
     const trimmed = search?.trim();
 
     const where: Prisma.CustomerWhereInput = {
       deletedAt: null,
       ...customerVisibilityWhere(actor),
+      ...(region ? { store: { region } } : {}),
+      ...(storeId ? { storeId } : {}),
       ...(trimmed
         ? {
             OR: [
@@ -164,7 +176,21 @@ export class CustomersService {
       take: SEARCH_RESULT_LIMIT,
     });
 
-    return customers.map(toListItem);
+    // Batch-load dealers/general_agents for the regions represented in this result
+    const regions = [...new Set(customers.map((c) => c.store.region))];
+    const dealerUsers = regions.length > 0
+      ? await this.prisma.user.findMany({
+          where: { role: { in: ['dealer', 'general_agent'] }, region: { in: regions }, deletedAt: null },
+          select: { name: true, role: true, region: true },
+          orderBy: { role: 'asc' }, // dealer before general_agent → prefer dealer
+        })
+      : [];
+    const dealerByRegion = new Map<Region, string>();
+    for (const u of dealerUsers) {
+      if (u.region && !dealerByRegion.has(u.region)) dealerByRegion.set(u.region, u.name);
+    }
+
+    return customers.map((c) => toListItem(c, dealerByRegion));
   }
 
   async getCustomerDetail(actor: AuthenticatedUser, id: number): Promise<CustomerDetail> {
@@ -608,7 +634,10 @@ export class CustomersService {
   ) {
     const customer = await this.prisma.customer.findFirst({
       where: { id: customerId, deletedAt: null },
-      select: { id: true, storeId: true, hasExosomeConsent: true, store: { select: { region: true } } },
+      select: {
+        id: true, storeId: true, hasExosomeConsent: true, nationalId: true, customerCode: true,
+        store: { select: { code: true, region: true } },
+      },
     });
     if (!customer) throw new AppError('CUSTOMER_NOT_FOUND', '找不到此顧客', 404);
     if (!canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
@@ -617,6 +646,12 @@ export class CustomersService {
     if (customer.hasExosomeConsent) {
       throw new AppError('EXOSOME_CONSENT_ALREADY_SIGNED', '此顧客已完成外泌體同意書補簽', 409);
     }
+
+    // 補簽完成後，若顧客還沒有 customerCode 且有身分證字號，依 [店號]-[身分證] 格式補上
+    const newCustomerCode =
+      !customer.customerCode && customer.nationalId
+        ? `${customer.store.code}-${customer.nationalId}`
+        : undefined;
 
     const now = new Date();
     await this.prisma.$transaction([
@@ -637,23 +672,57 @@ export class CustomersService {
           exosomeConsentSignedAt: now,
           isExosomeUser: true,
           exosomeConsentSignatureUrl: input.signatureUrl,
+          ...(newCustomerCode ? { customerCode: newCustomerCode } : {}),
         },
       }),
     ]);
 
     return { success: true, signedAt: now.toISOString() };
   }
+
+  async getExosomeConsentPdf(actor: AuthenticatedUser, customerId: number): Promise<Buffer> {
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: customerId, deletedAt: null },
+      select: {
+        id: true, name: true, nationalId: true, phone: true, customerCode: true,
+        hasExosomeConsent: true,
+        exosomeConsentSignedAt: true,
+        exosomeConsentSignatureUrl: true,
+        storeId: true,
+        store: { select: { name: true, region: true } },
+      },
+    });
+    if (!customer) throw new AppError('CUSTOMER_NOT_FOUND', '找不到此顧客', 404);
+    if (!canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
+      throw new AppError('PERMISSION_DENIED', '無權限存取此顧客資料', 403);
+    }
+    if (!customer.hasExosomeConsent || !customer.exosomeConsentSignedAt) {
+      throw new AppError('EXOSOME_CONSENT_NOT_SIGNED', '此顧客尚未完成外泌體同意書補簽', 404);
+    }
+
+    return buildExosomeConsentPdf({
+      customerName: customer.name,
+      customerCode: customer.customerCode,
+      nationalId: customer.nationalId,
+      phone: customer.phone,
+      storeName: customer.store.name,
+      signedAt: customer.exosomeConsentSignedAt,
+      signatureImageUrl: customer.exosomeConsentSignatureUrl,
+    });
+  }
 }
 
-function toListItem(customer: ListRow): CustomerListItem {
+function toListItem(customer: ListRow, dealerByRegion?: Map<Region, string>): CustomerListItem {
   return {
     id: customer.id,
     name: customer.name,
     phone: customer.phone,
     nationalId: customer.nationalId,
     customerCode: customer.customerCode,
+    storeId: customer.storeId,
     storeName: customer.store.name,
     region: customer.store.region,
+    dealerName: dealerByRegion?.get(customer.store.region) ?? null,
     createdAt: customer.createdAt.toISOString(),
   };
 }

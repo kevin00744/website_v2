@@ -35,6 +35,7 @@ interface POSCheckoutModalProps {
   customerId: number;
   customerName: string;
   isExosomeUser: boolean;
+  disclaimerFullySigned: boolean;
   exosomeConsentSignatureUrl: string | null;
   onClose: () => void;
   onCompleted: () => void;
@@ -63,6 +64,7 @@ export function POSCheckoutModal({
   customerId,
   customerName,
   isExosomeUser,
+  disclaimerFullySigned,
   exosomeConsentSignatureUrl,
   onClose,
   onCompleted,
@@ -98,6 +100,9 @@ export function POSCheckoutModal({
   const [sessionsDeducted, setSessionsDeducted] = useState('1');
   /** 多重支付：每筆 { method, amount } */
   const [splitPayments, setSplitPayments] = useState<{ method: PaymentMethod; amount: string }[]>([{ method: 'cash', amount: '' }]);
+  // 折扣（single_purchase 限定）
+  const [discountType, setDiscountType] = useState<'amount' | 'percent'>('amount');
+  const [discountValue, setDiscountValue] = useState('');
   // Step 2 付款（套裝方案模式）
   const [planPaymentMethod, setPlanPaymentMethod] = useState<PaymentMethod>('cash');
   const [step2Error, setStep2Error] = useState<string>();
@@ -106,7 +111,8 @@ export function POSCheckoutModal({
   const successTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
   const needsSignature = purchaseMode === 'service' && (consumptionType === 'wallet_deduction' || consumptionType === 'course_deduction');
-  const exosomeBlocked = isExosomeUser && !exosomeConsentSignatureUrl;
+  // 外泌體使用者需完成「免責聲明雙方簽署」或「外泌體補簽同意書」其中一項才能結帳
+  const exosomeBlocked = isExosomeUser && !disclaimerFullySigned && !exosomeConsentSignatureUrl;
 
   const selectedItem = serviceItems?.find((i) => String(i.id) === selectedItemId);
   const selectedPlan = promotionPlans?.find((p) => String(p.id) === selectedPlanId);
@@ -123,6 +129,8 @@ export function POSCheckoutModal({
       setSelectedStaffId('');
       setConsumptionType('single_purchase');
       setSplitPayments([{ method: 'cash', amount: '' }]);
+      setDiscountType('amount');
+      setDiscountValue('');
       setPlanPaymentMethod('cash');
       setSessionsDeducted('1');
       setSelectedCourseId('');
@@ -195,6 +203,7 @@ export function POSCheckoutModal({
   async function handleConsumptionTypeChange(ct: ConsumptionType) {
     setConsumptionType(ct);
     setSplitPayments([{ method: 'cash', amount: '' }]);
+    setDiscountValue('');
     setSelectedCourseId('');
     setStep2Error(undefined);
     if (ct === 'course_deduction' && !customerCourses) {
@@ -204,14 +213,22 @@ export function POSCheckoutModal({
 
   // 多重支付輔助
   const itemPrice = selectedItem?.price ?? 0;
+  const discountAmount = (() => {
+    const v = Number(discountValue) || 0;
+    if (discountType === 'amount') return Math.min(v, itemPrice);
+    // 折數：例如 9 = 9折 = 90% → discount = 10%
+    if (v > 0 && v <= 10) return Math.round(itemPrice * (1 - v / 10));
+    return 0;
+  })();
+  const effectivePrice = Math.max(0, itemPrice - discountAmount);
   const splitTotal = splitPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
-  const splitRemaining = itemPrice - splitTotal;
+  const splitRemaining = effectivePrice - splitTotal;
 
   function updateSplit(idx: number, field: 'method' | 'amount', value: string) {
     setSplitPayments((prev) => prev.map((p, i) => i === idx ? { ...p, [field]: value } : p));
   }
   function addSplit() {
-    setSplitPayments((prev) => [...prev, { method: 'transfer', amount: String(splitRemaining > 0 ? splitRemaining : '') }]);
+    setSplitPayments((prev) => [...prev, { method: 'transfer', amount: splitRemaining > 0 ? String(splitRemaining) : '' }]);
   }
   function removeSplit(idx: number) {
     setSplitPayments((prev) => prev.filter((_, i) => i !== idx));
@@ -235,12 +252,12 @@ export function POSCheckoutModal({
     }
 
     if (consumptionType === 'single_purchase') {
-      // 驗證：多重支付總和必須等於品項定價
+      // 驗證：多重支付總和必須等於折後金額
       if (splitPayments.some((p) => !p.amount || Number(p.amount) <= 0)) {
         setStep2Error('每筆付款金額必須填寫'); return;
       }
-      if (splitTotal !== itemPrice) {
-        setStep2Error(`付款總和 $${splitTotal} 與品項定價 $${itemPrice} 不符，請調整`); return;
+      if (splitTotal !== effectivePrice) {
+        setStep2Error(`付款總和 $${splitTotal} 與應付金額 $${effectivePrice} 不符，請調整`); return;
       }
       void handleServiceCheckout();
       return;
@@ -331,8 +348,8 @@ export function POSCheckoutModal({
         staffId: selectedStaffId ? Number(selectedStaffId) : undefined,
         serviceItemId,
         consumptionType,
-        // single_purchase: 金額＝品項定價，多重支付陣列
-        amountPaid: consumptionType === 'single_purchase' ? itemPrice : undefined,
+        // single_purchase: 金額＝折後金額，多重支付陣列
+        amountPaid: consumptionType === 'single_purchase' ? effectivePrice : undefined,
         payments: consumptionType === 'single_purchase'
           ? splitPayments.map((p) => ({ method: p.method as PaymentMethod, amount: Number(p.amount) }))
           : undefined,
@@ -343,7 +360,7 @@ export function POSCheckoutModal({
 
       const deductedCourse = selectedMergedCourse;
       const paymentSummary = splitPayments.length === 1
-        ? `$${itemPrice.toLocaleString()} 元（${PAYMENT_METHOD_LABELS[splitPayments[0].method]}）`
+        ? `$${effectivePrice.toLocaleString()} 元（${PAYMENT_METHOD_LABELS[splitPayments[0].method]}）`
         : splitPayments.map((p) => `${PAYMENT_METHOD_LABELS[p.method as PaymentMethod]} $${Number(p.amount).toLocaleString()}`).join(' ＋ ');
       const amountDisplay =
         consumptionType === 'course_deduction'
@@ -599,10 +616,50 @@ export function POSCheckoutModal({
                 />
                 {consumptionType === 'single_purchase' && (
                   <div className="flex flex-col gap-3">
-                    {/* 品項定價（固定，不可改） */}
-                    <div className="rounded-kiosk border-2 border-kiosk-primary/30 bg-kiosk-primary/5 px-4 py-3 text-center">
-                      <p className="text-sm text-slate-500">應付金額（品項定價）</p>
-                      <p className="text-3xl font-bold text-kiosk-primary">${itemPrice.toLocaleString()}</p>
+                    {/* 品項定價 + 折扣輸入 */}
+                    <div className="rounded-kiosk border-2 border-kiosk-primary/30 bg-kiosk-primary/5 px-4 py-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm text-slate-500">品項定價</p>
+                        <p className="text-xl font-bold text-slate-700">${itemPrice.toLocaleString()}</p>
+                      </div>
+                      {/* 折扣欄位 */}
+                      <div className="mt-3 flex items-center gap-2">
+                        <div className="flex rounded-kiosk border border-slate-300 overflow-hidden text-sm font-semibold">
+                          <button
+                            type="button"
+                            onClick={() => { setDiscountType('amount'); setDiscountValue(''); }}
+                            className={`px-3 py-1.5 transition-colors ${discountType === 'amount' ? 'bg-kiosk-primary text-white' : 'bg-white text-slate-600'}`}
+                          >
+                            扣除金額
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => { setDiscountType('percent'); setDiscountValue(''); }}
+                            className={`px-3 py-1.5 transition-colors ${discountType === 'percent' ? 'bg-kiosk-primary text-white' : 'bg-white text-slate-600'}`}
+                          >
+                            折數
+                          </button>
+                        </div>
+                        <input
+                          type="number"
+                          min={0}
+                          max={discountType === 'percent' ? 10 : itemPrice}
+                          step={discountType === 'percent' ? 0.1 : 1}
+                          value={discountValue}
+                          onChange={(e) => setDiscountValue(e.target.value)}
+                          placeholder={discountType === 'amount' ? '0' : '10'}
+                          className="w-24 rounded-kiosk border-2 border-slate-300 px-3 py-1.5 text-kiosk-base outline-none focus:border-kiosk-primary"
+                        />
+                        <span className="text-sm text-slate-500">{discountType === 'amount' ? '元' : '折（1–10）'}</span>
+                        {discountValue && <button type="button" onClick={() => setDiscountValue('')} className="text-sm text-slate-400 underline">清除</button>}
+                      </div>
+                      {discountAmount > 0 && (
+                        <p className="mt-1 text-sm text-amber-700">折扣：－${ discountAmount.toLocaleString() }</p>
+                      )}
+                      <div className="mt-2 border-t border-kiosk-primary/20 pt-2 text-center">
+                        <p className="text-sm text-slate-500">應付金額</p>
+                        <p className="text-3xl font-bold text-kiosk-primary">${effectivePrice.toLocaleString()}</p>
+                      </div>
                     </div>
 
                     {/* 多重支付列表 */}
@@ -641,15 +698,15 @@ export function POSCheckoutModal({
 
                     {/* 合計 & 差額提示 */}
                     <div className={`flex items-center justify-between rounded-kiosk px-4 py-2 text-sm font-semibold ${
-                      splitTotal === itemPrice ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'
+                      splitTotal === effectivePrice ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'
                     }`}>
                       <span>已填：${splitTotal.toLocaleString()}</span>
-                      {splitTotal < itemPrice && <span>差額：${splitRemaining.toLocaleString()}</span>}
-                      {splitTotal === itemPrice && <span>✓ 金額一致</span>}
-                      {splitTotal > itemPrice && <span>⚠ 超過 ${(splitTotal - itemPrice).toLocaleString()}</span>}
+                      {splitTotal < effectivePrice && <span>差額：${splitRemaining.toLocaleString()}</span>}
+                      {splitTotal === effectivePrice && <span>✓ 金額一致</span>}
+                      {splitTotal > effectivePrice && <span>⚠ 超過 ${(splitTotal - effectivePrice).toLocaleString()}</span>}
                     </div>
 
-                    {splitPayments.length < 4 && splitTotal < itemPrice && (
+                    {splitPayments.length < 4 && splitTotal < effectivePrice && (
                       <button type="button" onClick={addSplit} className="text-sm text-kiosk-primary underline">
                         ＋ 新增另一種付款方式（差額 ${splitRemaining.toLocaleString()}）
                       </button>

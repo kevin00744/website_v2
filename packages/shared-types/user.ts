@@ -137,5 +137,7 @@ export interface UserSummary {
   region: RegionValue | null;
   isActive: boolean;
   dealerId: number | null;
+  dealerName: string | null;
   parentId: number | null;
+  creatorName: string | null;
 }

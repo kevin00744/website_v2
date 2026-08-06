@@ -19,6 +19,10 @@ export function setUserActive(id: number, isActive: boolean): Promise<UserSummar
 }
 
 /** 修改自己的帳號（username / password / phone），不可改 role */
+export function assignUserDealer(userId: number, dealerId: number | null): Promise<UserSummary> {
+  return apiRequest<UserSummary>(`/users/${userId}/dealer`, { method: 'PATCH', json: { dealerId } });
+}
+
 export function updateSelf(input: UpdateSelfInput): Promise<UserSummary> {
   return apiRequest<UserSummary>('/users/me', { method: 'PATCH', json: input });
 }

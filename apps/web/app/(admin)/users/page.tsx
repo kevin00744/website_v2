@@ -1,29 +1,51 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { UserSummary } from '@website-v2/shared-types';
+import { REGION_LABEL, ROLE_LABEL } from '@website-v2/shared-types';
 import { ApiError } from '@/lib/api-client';
 import { getAuthUser, type AuthUser } from '@/lib/auth';
-import { deleteUser, listUsers, setUserActive } from '@/lib/users-api';
+import { assignUserDealer, deleteUser, listUsers, setUserActive } from '@/lib/users-api';
+import { listStores } from '@/lib/stores-api';
+import type { StoreSummary } from '@website-v2/shared-types';
 import { KioskButton } from '@/components/admin/kiosk/KioskButton';
+import { KioskSelect } from '@/components/admin/kiosk/KioskSelect';
 import { UserTable } from '@/components/admin/users/UserTable';
 import { UserCardList } from '@/components/admin/users/UserCardList';
 import { NewUserModal } from '@/components/admin/users/NewUserModal';
 import { ResetPasswordModal } from '@/components/admin/users/ResetPasswordModal';
+import { AssignDealerModal } from '@/components/admin/shared/AssignDealerModal';
 
 /** 對齊後端 UsersController：system_admin/admin/general_agent/dealer/manager 都可進入（各有資料範圍限制） */
 function canManageUsers(role: AuthUser['role'] | undefined): boolean {
   return role === 'system_admin' || role === 'admin' || role === 'general_agent' || role === 'dealer' || role === 'manager';
 }
 
-/**
- * 帳號管理：middleware.ts 已經會在路由層擋掉非 admin/system_admin/dealer（連畫面都進不來），
- * 這裡的角色檢查是第二層防線，也讓使用者在畫面上看到清楚的白話文說明。
- *
- * dealer 進來只看得到自己區域的店長帳號（後端 listUsers 已經依角色過濾），畫面上也只開放
- * 「新增店長帳號」，不顯示編輯/重設密碼/刪除/停用按鈕——後端那幾支路由本來就還是只開放
- * admin/system_admin，與其讓 dealer 點了按鈕才看到 403，直接在 UI 上不顯示。
- */
+function canSeeCreator(role: AuthUser['role'] | undefined): boolean {
+  return role === 'system_admin' || role === 'admin';
+}
+
+function canFilterByRegionOrStore(role: AuthUser['role'] | undefined): boolean {
+  return role === 'system_admin' || role === 'admin';
+}
+
+const REGION_OPTIONS = [
+  { value: '', label: '全部區域' },
+  { value: 'A', label: REGION_LABEL['A'] },
+  { value: 'B', label: REGION_LABEL['B'] },
+  { value: 'C', label: REGION_LABEL['C'] },
+];
+
+const ROLE_FILTER_OPTIONS = [
+  { value: '', label: '全部角色' },
+  { value: 'general_agent', label: ROLE_LABEL['general_agent'] },
+  { value: 'dealer', label: ROLE_LABEL['dealer'] },
+  { value: 'manager', label: ROLE_LABEL['manager'] },
+  { value: 'accountant', label: ROLE_LABEL['accountant'] },
+  { value: 'staff', label: ROLE_LABEL['staff'] },
+  { value: 'admin', label: ROLE_LABEL['admin'] },
+];
+
 export default function UsersPage() {
   const [user, setUser] = useState<AuthUser>();
   const [checkedAuth, setCheckedAuth] = useState(false);
@@ -35,10 +57,20 @@ export default function UsersPage() {
   const [editingUser, setEditingUser] = useState<UserSummary>();
   const [resettingUser, setResettingUser] = useState<UserSummary>();
   const [deletingId, setDeletingId] = useState<number>();
+  const [assignDealerUser, setAssignDealerUser] = useState<UserSummary | null>(null);
+  const [dealerList, setDealerList] = useState<UserSummary[]>([]);
+  const [filterRole, setFilterRole] = useState('');
+  const [filterRegion, setFilterRegion] = useState('');
+  const [filterStoreId, setFilterStoreId] = useState('');
+  const [stores, setStores] = useState<StoreSummary[]>([]);
 
   useEffect(() => {
-    setUser(getAuthUser());
+    const authUser = getAuthUser();
+    setUser(authUser);
     setCheckedAuth(true);
+    if (canFilterByRegionOrStore(authUser?.role)) {
+      listStores().then(setStores).catch(() => setStores([]));
+    }
   }, []);
 
   const loadUsers = useCallback(async () => {
@@ -59,6 +91,15 @@ export default function UsersPage() {
       void loadUsers();
     }
   }, [checkedAuth, user, loadUsers]);
+
+  const filteredUsers = useMemo(() => {
+    return users.filter((u) => {
+      if (filterRole && u.role !== filterRole) return false;
+      if (filterRegion && u.region !== filterRegion) return false;
+      if (filterStoreId && String(u.storeId) !== filterStoreId) return false;
+      return true;
+    });
+  }, [users, filterRole, filterRegion, filterStoreId]);
 
   async function handleToggleActive(target: UserSummary) {
     setTogglingId(target.id);
@@ -118,6 +159,27 @@ export default function UsersPage() {
     );
   }
 
+  const showFilters = canFilterByRegionOrStore(user?.role);
+  const showCreator = canSeeCreator(user?.role);
+  const isAdminUser = user?.role === 'admin' || user?.role === 'system_admin';
+
+  async function openAssignDealerForUser(target: UserSummary) {
+    setAssignDealerUser(target);
+    if (dealerList.length === 0) {
+      try {
+        const all = await listUsers();
+        setDealerList(all.filter((u) => u.role === 'dealer' && u.isActive));
+      } catch { /* ignore */ }
+    }
+  }
+  const storeOptions = [
+    { value: '', label: '全部分店' },
+    ...stores
+      .filter((s) => !filterRegion || s.region === filterRegion)
+      .map((s) => ({ value: String(s.id), label: s.name })),
+  ];
+  const hasActiveFilter = filterRole || filterRegion || filterStoreId;
+
   return (
     <div className="flex flex-col gap-6 pb-24 md:pb-0">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -127,21 +189,63 @@ export default function UsersPage() {
         </KioskButton>
       </div>
 
+      {/* 篩選器：admin/system_admin 可過濾角色、區域、分店 */}
+      <div className="flex flex-wrap gap-3">
+        <div className="min-w-[150px]">
+          <KioskSelect
+            label="角色"
+            options={ROLE_FILTER_OPTIONS}
+            value={filterRole}
+            onChange={(e) => setFilterRole(e.target.value)}
+          />
+        </div>
+        {showFilters && (
+          <>
+            <div className="min-w-[140px]">
+              <KioskSelect
+                label="區域"
+                options={REGION_OPTIONS}
+                value={filterRegion}
+                onChange={(e) => { setFilterRegion(e.target.value); setFilterStoreId(''); }}
+              />
+            </div>
+            <div className="min-w-[180px]">
+              <KioskSelect
+                label="分店"
+                options={storeOptions}
+                value={filterStoreId}
+                onChange={(e) => setFilterStoreId(e.target.value)}
+              />
+            </div>
+          </>
+        )}
+        {hasActiveFilter && (
+          <div className="flex items-end">
+            <KioskButton variant="ghost" onClick={() => { setFilterRole(''); setFilterRegion(''); setFilterStoreId(''); }}>
+              清除篩選
+            </KioskButton>
+          </div>
+        )}
+      </div>
+
       {loadError && (
         <p className="text-kiosk-base font-semibold text-kiosk-danger" role="alert">
           ⚠️ {loadError}
         </p>
       )}
       {loading && <p className="text-kiosk-base text-slate-500">載入中…</p>}
-      {!loading && !loadError && users.length === 0 && (
-        <p className="text-kiosk-base text-slate-500">目前還沒有任何帳號資料</p>
+      {!loading && !loadError && filteredUsers.length === 0 && (
+        <p className="text-kiosk-base text-slate-500">
+          {hasActiveFilter ? '沒有符合篩選條件的帳號' : '目前還沒有任何帳號資料'}
+        </p>
       )}
 
       {user && (
         <>
           <UserTable
-            users={users}
+            users={filteredUsers}
             currentUserId={user.id}
+            currentUserRole={user.role}
             onEdit={openEditModal}
             onResetPassword={setResettingUser}
             onToggleActive={handleToggleActive}
@@ -149,10 +253,13 @@ export default function UsersPage() {
             onDelete={handleDelete}
             deletingId={deletingId}
             readOnly={false}
+            showCreator={showCreator}
+            onAssignDealer={isAdminUser ? openAssignDealerForUser : undefined}
           />
           <UserCardList
-            users={users}
+            users={filteredUsers}
             currentUserId={user.id}
+            currentUserRole={user.role}
             onEdit={openEditModal}
             onResetPassword={setResettingUser}
             onToggleActive={handleToggleActive}
@@ -160,6 +267,8 @@ export default function UsersPage() {
             onDelete={handleDelete}
             deletingId={deletingId}
             readOnly={false}
+            showCreator={showCreator}
+            onAssignDealer={isAdminUser ? openAssignDealerForUser : undefined}
           />
         </>
       )}
@@ -185,6 +294,20 @@ export default function UsersPage() {
           onDone={() => setResettingUser(undefined)}
         />
       )}
+
+      <AssignDealerModal
+        open={Boolean(assignDealerUser)}
+        targetName={assignDealerUser?.name ?? ''}
+        currentDealerId={assignDealerUser?.dealerId ?? null}
+        dealers={dealerList}
+        onAssign={async (dealerId) => {
+          if (!assignDealerUser) return;
+          const updated = await assignUserDealer(assignDealerUser.id, dealerId);
+          setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
+          setAssignDealerUser(null);
+        }}
+        onClose={() => setAssignDealerUser(null)}
+      />
     </div>
   );
 }

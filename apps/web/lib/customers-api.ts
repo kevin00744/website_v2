@@ -24,9 +24,14 @@ export function createQuickCustomer(input: {
   return apiRequest<CustomerDetail>('/customers/quick', { method: 'POST', json: input });
 }
 
-export function searchCustomers(query: string): Promise<CustomerListItem[]> {
+export function searchCustomers(
+  query: string,
+  filters?: { region?: string; storeId?: number },
+): Promise<CustomerListItem[]> {
   const params = new URLSearchParams();
   if (query) params.set('search', query);
+  if (filters?.region) params.set('region', filters.region);
+  if (filters?.storeId) params.set('storeId', String(filters.storeId));
   return apiRequest<CustomerListItem[]>(`/customers?${params.toString()}`);
 }
 
@@ -118,6 +123,10 @@ export interface CustomerCourseItem {
   remainingSessions: number;
   purchasePrice: number | null;
   createdAt: string;
+}
+
+export function getExosomeConsentPdfPath(customerId: number): string {
+  return `/customers/${customerId}/exosome-consent`;
 }
 
 /** 外泌體補簽同意書 */

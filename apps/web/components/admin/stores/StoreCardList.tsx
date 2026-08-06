@@ -9,6 +9,8 @@ interface StoreCardListProps {
   onDelete?: (store: StoreSummary) => void;
   deletingId?: number;
   onEdit?: (store: StoreSummary) => void;
+  onAssignDealer?: (store: StoreSummary) => void;
+  canAssignDealer?: boolean;
 }
 
 const REGION_LABEL: Record<StoreSummary['region'], string> = {
@@ -18,7 +20,7 @@ const REGION_LABEL: Record<StoreSummary['region'], string> = {
 };
 
 /** 手機版（<768px）：卡片式列表，重點突出編號與名稱，表格在小螢幕擠成一團很難點 */
-export function StoreCardList({ stores, onToggleStatus, togglingId, canToggleStatus, onDelete, deletingId, onEdit }: StoreCardListProps) {
+export function StoreCardList({ stores, onToggleStatus, togglingId, canToggleStatus, onDelete, deletingId, onEdit, onAssignDealer, canAssignDealer }: StoreCardListProps) {
   return (
     <ul className="flex flex-col gap-3 md:hidden">
       {stores.map((store) => (
@@ -30,6 +32,14 @@ export function StoreCardList({ stores, onToggleStatus, togglingId, canToggleSta
               <span className="text-kiosk-base text-slate-500">
                 {REGION_LABEL[store.region]} · {store.phone ?? '尚未填寫電話'}
               </span>
+              {canAssignDealer && (
+                <button
+                  onClick={() => onAssignDealer?.(store)}
+                  className="mt-1 text-left text-sm text-slate-400 underline-offset-2 hover:text-kiosk-primary hover:underline"
+                >
+                  負責代理：{store.dealerName ?? '未指定'}
+                </button>
+              )}
             </div>
             <span
               className={`shrink-0 rounded-kiosk px-3 py-1 text-kiosk-base font-semibold ${

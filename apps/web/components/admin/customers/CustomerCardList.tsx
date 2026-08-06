@@ -32,6 +32,9 @@ export function CustomerCardList({ customers, onSelect }: CustomerCardListProps)
             <span className="text-kiosk-base text-slate-500">
               {customer.customerCode ?? '—'} · {REGION_LABEL[customer.region]} {customer.storeName}
             </span>
+            {customer.dealerName && (
+              <span className="text-kiosk-base text-slate-400">負責代理：{customer.dealerName}</span>
+            )}
             <span className="text-kiosk-base text-slate-400">建立於 {formatDate(customer.createdAt)}</span>
           </button>
         </li>

@@ -82,7 +82,8 @@ model User {
   /// 所屬代理 ID（FK → dealer 帳號），方便依代理做資料歸屬統計與過濾
   dealerId  Int?      @map("dealer_id")
   dealer    User?     @relation("UserDealer", fields: [dealerId], references: [id])
-  dealerUsers User[]  @relation("UserDealer")
+  dealerUsers   User[]  @relation("UserDealer")
+  managedStores Store[] @relation("StoreDealer")
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -135,6 +136,9 @@ model Store {
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
   deletedAt        DateTime? @map("deleted_at")
+
+  dealerId  Int?      @map("dealer_id")
+  dealer    User?     @relation("StoreDealer", fields: [dealerId], references: [id])
 
   users     User[]
   customers Customer[]

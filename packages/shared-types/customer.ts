@@ -148,8 +148,10 @@ export interface CustomerListItem {
   phone: string | null;
   nationalId: string | null;
   customerCode: string | null;
+  storeId: number;
   storeName: string;
   region: 'A' | 'B' | 'C';
+  dealerName: string | null;
   createdAt: string;
 }
 

@@ -62,7 +62,7 @@ export default function ChatContactsPage() {
     );
   }
 
-  const targets = allUsers?.filter((candidate) => candidate.role === 'dealer' || candidate.role === 'manager') ?? [];
+  const targets = allUsers?.filter((candidate) => candidate.role === 'dealer' || candidate.role === 'general_agent' || candidate.role === 'manager') ?? [];
 
   return (
     <div className="flex flex-col gap-6">

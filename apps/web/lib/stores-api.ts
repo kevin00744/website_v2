@@ -42,6 +42,11 @@ export function deleteStoreStaff(storeId: number, staffId: number): Promise<void
   return apiRequest<void>(`/stores/${storeId}/staff/${staffId}`, { method: 'DELETE' });
 }
 
+/** 指定（或清除）分店的負責代理，僅 admin/system_admin */
+export function assignStoreDealer(storeId: number, dealerId: number | null): Promise<StoreSummary> {
+  return apiRequest<StoreSummary>(`/stores/${storeId}/dealer`, { method: 'PATCH', json: { dealerId } });
+}
+
 /** 更新分店功能開關，manager 限操作自己的分店 */
 export function updateStoreFeatures(storeId: number, features: Record<string, boolean>): Promise<void> {
   return apiRequest<void>(`/stores/${storeId}/features`, { method: 'PATCH', json: { features } });

@@ -38,4 +38,6 @@ export interface StoreSummary {
   phone: string | null;
   address: string | null;
   isActive: boolean;
+  dealerId: number | null;
+  dealerName: string | null;
 }

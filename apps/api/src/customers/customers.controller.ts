@@ -89,8 +89,15 @@ export class CustomersController {
   ) {}
 
   @Get()
-  search(@CurrentUser() actor: AuthenticatedUser, @Query('search') search?: string) {
-    return this.customersService.searchCustomers(actor, search);
+  search(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Query('search') search?: string,
+    @Query('region') region?: string,
+    @Query('storeId', new ParseIntPipe({ optional: true })) storeId?: number,
+  ) {
+    const validRegions = ['A', 'B', 'C'];
+    const typedRegion = region && validRegions.includes(region) ? (region as 'A' | 'B' | 'C') : undefined;
+    return this.customersService.searchCustomers(actor, search, typedRegion, storeId);
   }
 
   @Get(':id')
@@ -277,6 +284,17 @@ export class CustomersController {
     @Body() dto: { amount: number; paymentMethod: string; note?: string },
   ) {
     return this.customersService.topUpWallet(actor, id, dto);
+  }
+
+  /** 取得外泌體補簽同意書 PDF */
+  @Get(':id/exosome-consent')
+  async getExosomeConsent(@CurrentUser() actor: AuthenticatedUser, @Param('id', ParseIntPipe) id: number, @Res() res: Response) {
+    const buffer = await this.customersService.getExosomeConsentPdf(actor, id);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': 'inline; filename="exosome-consent.pdf"',
+    });
+    res.send(buffer);
   }
 
   /** 舊顧客補簽外泌體使用同意書 */
