@@ -1,78 +1,174 @@
 # 專案檔案說明（all.md）
 
-這份文件說明專案裡每一個重要檔案/資料夾的功能，方便之後修改時知道該改哪裡。
-
-> website_v2 是 `cms`（Laravel）的全新重寫版，目標是最終取代 cms，技術棧改成 Next.js + NestJS + PostgreSQL（Prisma）。目前還在「地基」階段：資料庫設計、簽名安全驗證邏輯、Docker 開發環境已完成；Customers CRUD、RBAC Guard、Next.js 前台/後台畫面尚未開發。
+> 最後更新：2026-08-09
+> 說明專案裡每一個重要檔案/資料夾的功能，方便之後修改時知道該改哪裡。
 
 ---
 
-## 1. 根目錄設定檔
+## 1. 根目錄
 
 | 檔案 | 功能 |
 |------|------|
-| `docker-compose.yml` | 本機開發環境定義：`web`（Next.js）、`api`（NestJS）、`db`（Postgres）三個服務，container/network/port 全部跟 `cms` 隔離。`web`/`api` 用乾淨的 `node:20-alpine` image 掛載原始碼，不會自動 build/install，要手動 `docker compose exec` 進去操作（詳見 `Start.md`）。 |
-| `package.json` | 根目錄 workspace 設定（`apps/*`、`packages/*`），目前只是宣告 monorepo 結構，沒有自己的依賴。 |
-| `.gitignore` | 排除 `node_modules/`、`dist/`、`.next/`、`.env`、log 檔。 |
-| `Start.md` | 開發環境的啟動/關閉/重啟操作手冊。 |
+| `docker-compose.yml` | 本機開發環境定義：`web`（Next.js）、`api`（NestJS）、`db`（Postgres 16）三個服務。容器主行程為 `tail -f /dev/null`（保持存活），NestJS 和 Next.js **需手動啟動**。 |
+| `package.json` | 根目錄 workspace 設定（`apps/*`、`packages/*`）。 |
+| `Start.md` | 啟動/關閉/重啟/build 完整操作手冊（含常見問題診斷）。 |
+| `SYSTEM.md` | 完整系統說明（架構、DB 模型、API 端點、核心流程、設計決策）。 |
+| `README.md` | 快速入門、技術棧、連線資訊、文件索引。 |
 | `all.md` | 本檔案，逐檔說明專案結構。 |
 
 ---
 
-## 2. `apps/api`（NestJS — 業務邏輯與資料庫存取）
+## 2. `apps/api`（NestJS 後端）
+
+### 根設定
 
 | 檔案 | 功能 |
 |------|------|
-| `package.json` | NestJS 專案的依賴與指令（`start:dev` 開發模式、`prisma:generate`/`prisma:migrate` 操作資料庫）。 |
-| `tsconfig.json` | TypeScript 編譯設定，開了 `strict` 模式。 |
-| `nest-cli.json` | Nest CLI 設定（`sourceRoot: src`）。 |
-| `.env.example` | 環境變數範本，主要是 `DATABASE_URL`（指向獨立於 cms 的 Postgres）與 `PORT`。 |
-| `Dockerfile` | ⚠️ 目前開發階段沒用到。留給之後正式上線時，用多階段 build 產生 production image。 |
-| `prisma/schema.prisma` | **整個系統的資料表設計**。定義 `User`（角色 enum：`system_admin`/`admin`/`editor`/`dealer`/`manager`）、`Store`（分區/分店代碼）、`Customer`（身分證號/顧客編號/雙簽署時間快取欄位）、`Signature`（append-only，簽名安全儲存的核心，見下方說明）。 |
-| `src/main.ts` | 應用程式進入點：設定 global prefix `api/v2`、註冊全域例外攔截器 `HttpExceptionFilter`、開 CORS、啟動 HTTP server。 |
-| `src/app.module.ts` | 根模組，目前匯入 `PrismaModule` 與 `SignatureModule`（之後 Customers/Stores/Inventory/Auth 模組會加在這裡）。 |
-| `src/prisma/prisma.service.ts` | 包裝 Prisma Client，在 Nest 生命週期 `onModuleInit`/`onModuleDestroy` 時連線/斷線資料庫。 |
-| `src/prisma/prisma.module.ts` | 把 `PrismaService` 設為 `@Global()`，讓任何模組都不用重複 import 就能注入。 |
-| `src/common/errors/app-error.ts` | 所有業務邏輯丟出的例外都用這個類別，帶語意化 `code`（例如 `SIGNATURE_VERIFY_FAILED`），而不是裸的 `Error`。`code` 必須在 `packages/copy/zh-TW.ts` 有對應翻譯。 |
-| `src/common/filters/http-exception.filter.ts` | 全域例外攔截器：把 `AppError` 轉成 `{ code }` 回應，未知例外一律回 `{ code: 'DEFAULT' }`，**絕不把 exception message/stack 洩漏給前端**，真正訊息只寫進 server log。 |
-| `src/signature/signature.service.ts` | **數位簽名安全儲存的核心邏輯**。`createSignature()`：檢查內容快照/簽名圖/筆觸點數（防止空簽名），計算 `content_hash`（SHA-256(聲明書內容快照)）與 `record_hash`（SHA-256(customerId+documentType+signerRole+contentHash+signatureImageUrl+signedAt)），寫入 append-only 的 `signatures` 表，並同步更新 `customers` 表上的雙簽署時間快取欄位。`verifySignature()`：重新計算兩層 hash 並跟資料庫存的比對，任何一筆資料被竄改都會讓 hash 不一致，進而拋出 `SIGNATURE_VERIFY_FAILED`。 |
-| `src/signature/signature.controller.ts` | 對外路由：`POST /api/v2/signature` 建立簽名（從 request 帶入 IP/User-Agent 做法遵留痕）、`GET /api/v2/signature/:id/verify` 驗證某筆簽名是否被竄改。 |
-| `src/signature/signature.module.ts` | 把上面 controller/service 組成一個 Nest 模組。 |
+| `package.json` | 依賴與指令：`npm run build`（nest build，輸出 `dist/src/`）、`start:dev`（watch 模式） |
+| `tsconfig.json` | TypeScript 設定，`outDir: ./dist`，strict 模式，輸出實際在 `dist/src/` |
+| `nest-cli.json` | Nest CLI 設定（`sourceRoot: src`） |
+| `dist/src/main.js` | **production 啟動點**（`node dist/src/main.js`），由 `npm run build` 產生 |
 
-## 3. `apps/web`（Next.js — 前台官網 + 店員後台）
-
-> ⚠️ 目前只有資料夾結構與佔位頁面，kiosk 防呆元件、CRM、簽署畫面**尚未實作**。
+### `prisma/`
 
 | 檔案 | 功能 |
 |------|------|
-| `package.json` | Next.js 專案依賴，已先加入 `react-hook-form`/`react-imask`/`react-signature-canvas`/`zod`，是之後做「防呆表單」與「簽署聲明書」會用到的套件，目前還沒有程式碼真正使用它們。 |
-| `next.config.js` | Next.js 設定，目前是空白預設值。 |
-| `Dockerfile` | ⚠️ 目前開發階段沒用到，留給之後正式上線用。 |
-| `app/layout.tsx` | 全站共用的 root layout（`<html lang="zh-TW">`）。 |
-| `app/(public)/page.tsx` | 官網首頁佔位頁，待依 tsanyen.com 視覺風格實作品牌故事/服務項目/據點區塊。 |
-| `app/(admin)/customers/page.tsx` | 店員後台「顧客列表」佔位頁，待實作極速搜尋 + kiosk 設計系統元件。 |
+| `schema.prisma` | **整個系統的資料表設計**，含所有 model 和 enum（Role、Region、ConsumptionType 等） |
+| `migrations/` | Prisma migration 歷程，每次 schema 變更後追加 |
+| `seed.ts` | 種子資料：系統管理員帳號、預設分店、同意書範本 |
 
-## 4. `packages`（前後端共用程式碼）
+### `src/` 各模組
 
-| 檔案 | 功能 |
-|------|------|
-| `copy/zh-TW.ts` | **話術字典**：把 API 回傳的語意化 error code（如 `SIGNATURE_VERIFY_FAILED`）轉成門市人員看得懂的白話文句子。前端任何地方顯示錯誤訊息都必須透過 `translateErrorCode()`，禁止直接顯示後端原始訊息。新增一個 `AppError` code 時，務必同步在這裡補一筆翻譯，否則畫面會落到 `DEFAULT` 的通用提示。 |
-| `copy/package.json` | 把上面那份字典包成一個 workspace package（`@website-v2/copy`），讓 `apps/web` 可以直接 import。 |
-| `shared-types/index.ts` | 前後端共用的基礎型別（`Role`/`Region`/`DocumentType`/`SignerRole`），對應 `schema.prisma` 裡的 enum，避免前端手刻字串造成打錯字。 |
-| `shared-types/package.json` | 把上面型別包成 workspace package（`@website-v2/shared-types`）。 |
+| 模組 | 路徑 | 說明 |
+|------|------|------|
+| 進入點 | `main.ts` | port 3000，全域前綴 `/api/v2`，啟用 CORS，掛全域例外攔截器 |
+| 根模組 | `app.module.ts` | 匯入所有子模組 |
+| **auth** | `src/auth/` | JWT 認證（username 登入）、JwtAuthGuard、RolesGuard、`@Roles()`、`@CurrentUser()` |
+| **users** | `src/users/` | 帳號 CRUD，帳號建立矩陣（CREATOR_CAN_ASSIGN），`PATCH /users/me` 個人設定，強制重設密碼 |
+| **stores** | `src/stores/` | 分店 CRUD，區域代碼自動產生（pg advisory lock 防併發），功能開關（features JSON），負責代理商指派 |
+| **customers** | `src/customers/` | 顧客 CRUD（姓名/身分證終身鎖定），顧客編號生成，療程紀錄，同意書 PDF，錢包，課程 |
+| **customer-disclaimer** | `src/customers/customer-disclaimer.service.ts` | 同意書補簽流程（服務人員先簽/顧客後簽），PDF 建立與顧客補簽，contentSnapshot 凍結座標 |
+| **disclaimer-pdf** | `src/customers/disclaimer-pdf.util.ts` | pdf-lib PDF 生成，embed 電子簽名圖，DisclaimerHeaderData（含 customerCode） |
+| **customer-courses** | `src/customer-courses/` | 課程退費轉儲值金（`refund-to-credit`），課程轉換（`convert`） |
+| **service-items** | `src/service-items/` | 服務品項 CRUD（全分店通用或分店專屬） |
+| **service-records** | `src/service-records/` | POS 服務紀錄，三種消費方式，多重付款，核銷還原（`rollback`） |
+| **financial** | `src/financial/` | 財務帳務（FinancialRecord），收入/支出，當日帳務摘要 |
+| **petty-cash** | `src/petty-cash/` | 備用金獨立系統（PettyCashLog），手動增減，餘額快照 |
+| **inventory** | `src/inventory/` | 各分店庫存，補貨請求（RestockRequest）流程，庫存調撥 |
+| **attendance** | `src/attendance/` | 上下班打卡，月份考勤統計，業績統計 |
+| **chat** | `src/chat/` | WebSocket 即時通訊，一對一對話，未讀數更新，依角色自動建立聯絡人清單 |
+| **contact** | `src/contact/` | 聯絡訊息管理，詢問類別，轉發給分店 |
+| **promotion-plans** | `src/promotion-plans/` | 促銷方案 CRUD，購買套餐 |
+| **signature** | `src/signature/` | 電子簽名雜湊工具（contentHash + recordHash），tamper detection |
+| **prisma** | `src/prisma/` | `PrismaService`（全域 singleton），`onModuleInit` 連線、`onModuleDestroy` 斷線 |
+| **common** | `src/common/` | `AppError`（語意化錯誤碼 + statusCode），`GlobalExceptionFilter`（不洩漏 stack），`upload.util`（Multer 設定） |
+
+### 重要設計原則
+
+- **Prisma select 而非 include**：用 `satisfies Prisma.XxxSelect` + `Prisma.XxxGetPayload<{ select: typeof CONST }>` 取得精確型別推斷
+- **AppError**：所有業務邏輯錯誤用 `throw new AppError('ERROR_CODE', '訊息', statusCode)`，不拋裸 Error
+- **財務雙軌**：外包支付和現金支出同一 transaction 同時寫 `FinancialRecord` + `PettyCashLog`
 
 ---
 
-## 5. 數位簽名安全機制總覽（跨多個檔案，集中說明）
+## 3. `apps/web`（Next.js 前端）
 
-這是本專案除了一般 CRUD 之外，技術上最關鍵的部分，分散在以下檔案：
+### 根設定
 
-1. `prisma/schema.prisma` 的 `Signature` model — 資料結構，**只允許 INSERT**，沒有 `updatedAt`、沒有 soft delete，重新簽名一律是新增一筆。
-2. `signature.service.ts` 的 `createSignature()` — 簽名送進來時，當下就把「聲明書內容快照」與「簽名圖/筆觸/時間/簽署人」一起做雙層 SHA-256 雜湊並存證。
-3. `signature.service.ts` 的 `verifySignature()` — 之後任何時候都能重算雜湊，比對資料庫裡存的 `record_hash`，偵測資料是否被竄改（資料庫被直接改過一個欄位，雜湊就會不一致）。
-4. `http-exception.filter.ts` + `app-error.ts` + `packages/copy/zh-TW.ts` — 驗證失敗時，後端只回語意化 code，前端負責轉成白話文，不會讓門市人員看到「hash mismatch」這種技術訊息。
+| 檔案 | 功能 |
+|------|------|
+| `package.json` | Next.js 14 依賴，Tailwind CSS，React Hook Form，Zod |
+| `next.config.js` | Next.js 設定（API rewrite proxy，靜態檔案路徑） |
+| `.next/` | Build 輸出（`npm run build` 產生），`next start apps/web -p 3000` 從這裡啟動 |
 
-## 6. 尚未開發的部分（提醒用，非錯誤清單）
+### `app/`（路由）
 
-- `apps/api/src/customers`、`stores`、`inventory`、`auth`、`rbac`、`content` 目前只有空資料夾，對應的 module/controller/service 都還沒寫。
-- `apps/web/components/admin/kiosk`、`components/admin/signature` 目前也是空的，防呆 UI 元件（`KioskButton`/`MaskedInput`/簽署全螢幕頁）尚未實作。
-- 還沒有任何 RBAC Guard（`@Roles()` decorator）接到 controller 上，目前 `signature.controller.ts` 的兩個端點是完全公開的，正式串接 CRUD 時要記得補上權限檢查。
+| 路徑 | 說明 |
+|------|------|
+| `app/page.tsx` | 根路徑 `/` → 重導向 `/admin/login` |
+| `app/layout.tsx` | 全域 layout，PWA meta tags |
+| `app/(admin)/login/` | 登入頁（username 帳號 + 密碼輸入） |
+| `app/(admin)/customers/` | 顧客資料（左側列表 + 右側 CustomerDetailDrawer） |
+| `app/(admin)/inventory/` | 庫存管理 |
+| `app/(admin)/attendance/` | 打卡頁 |
+| `app/(admin)/manager-dashboard/` | 考勤 & 業績統計（店長/會計） |
+| `app/(admin)/financial/` | 財務帳務 |
+| `app/(admin)/petty-cash/` | 備用金管理 |
+| `app/(admin)/expenses/` | 支出管理 |
+| `app/(admin)/stores/` | 分店管理（含負責代理商指派） |
+| `app/(admin)/store-settings/` | 分店功能設定（店長勾選啟用模組） |
+| `app/(admin)/store-staff/` | 員工帳號管理（店長專用） |
+| `app/(admin)/store-service-items/` | 服務品項管理 |
+| `app/(admin)/promotion-plans/` | 促銷方案管理 |
+| `app/(admin)/contact-messages/` | 聯絡訊息（含轉發給分店） |
+| `app/(admin)/contact-categories/` | 詢問類別管理（admin 專用） |
+| `app/(admin)/users/` | 帳號管理（含負責代理商指派，dealer+） |
+| `app/(admin)/chat-contacts/` | 聊天清單管理（admin 專用） |
+| `app/(admin)/settings/` | 個人設定（姓名/Email/帳號/電話/密碼） |
+
+### `components/admin/`
+
+| 元件 | 說明 |
+|------|------|
+| `AdminShell.tsx` | 側欄 shell，依 `navigationConfig` + 角色 + storeFeatures 動態渲染導覽，固定顯示內部訊息按鈕（WebSocket 未讀數） |
+| `customers/CustomerDetailDrawer.tsx` | 顧客詳情側拉板（含同意書狀態、POS 按鈕、療程、課程、錢包） |
+| `customers/POSCheckoutModal.tsx` | POS 結帳 Modal（三種消費方式、多重付款、電子簽名、exosomeBlocked 邏輯） |
+| `customers/ExosomeConsentModal.tsx` | 外泌體同意書補簽 Modal（服務人員 + 顧客雙簽署流程） |
+| `customers/TreatmentRecordTab.tsx` | 療程紀錄列表（含照片、核銷還原按鈕） |
+| `stores/StoreTable.tsx` | 分店列表（含負責代理商欄位，可點擊指派） |
+| `stores/StoreCardList.tsx` | 分店卡片列表（行動裝置用） |
+| `users/UserTable.tsx` | 帳號列表（含負責代理商欄位） |
+| `users/UserCardList.tsx` | 帳號卡片列表 |
+| `shared/AssignDealerModal.tsx` | 指派/更換負責代理商 Modal（分店和帳號共用） |
+| `kiosk/` | 共用 UI 元件（KioskButton、KioskInput、KioskModal 等 kiosk 風格元件） |
+
+### `lib/`（API client 與工具）
+
+| 檔案 | 說明 |
+|------|------|
+| `api-client.ts` | `apiRequest()` 封裝（帶 JWT Cookie），`resolveApiBaseUrl()` 依 `window.location.hostname` 動態組 API URL（**不寫死 localhost**） |
+| `auth.ts` | `saveAuth()` / `getAuthUser()` 操作 JWT Cookie，`AuthUser` 型別定義（含 storeFeatures） |
+| `navigationConfig.ts` | 統一導覽設定，含 `featureKey`（需分店啟用）和 `roleGuard`（角色守門） |
+| `customers-api.ts` | 顧客相關 API 呼叫 |
+| `stores-api.ts` | 分店相關 API 呼叫（含 `assignStoreDealer`） |
+| `users-api.ts` | 帳號相關 API 呼叫（含 `assignUserDealer`） |
+| `service-records-api.ts` | POS 服務紀錄、核銷還原 |
+| `petty-cash-api.ts` | 備用金操作 |
+| `financial-api.ts` | 財務帳務 |
+| `inventory-api.ts` | 庫存管理 |
+
+### `hooks/`
+
+| 檔案 | 說明 |
+|------|------|
+| `useStoreFeatures.ts` | 讀取當前登入者 `storeFeatures` 的 hook，含 `hasFeature()` 工具函式（admin 永遠通過） |
+
+---
+
+## 4. `packages/`（前後端共用）
+
+### `packages/shared-types/`
+
+| 檔案 | 說明 |
+|------|------|
+| `auth.ts` | 登入 schema（Zod）、`AuthUser` 型別（含 storeFeatures） |
+| `customer.ts` | `CustomerSummary`、`CustomerDetail`（含 disclaimerFullySigned、exosome 相關欄位） |
+| `store.ts` | `StoreSummary`（含 `dealerId`、`dealerName`） |
+| `user.ts` | `UserSummary`、Role enum、Region enum、帳號建立/更新 schema |
+| `service-record.ts` | `ServiceRecord` 型別、付款方式 enum |
+
+> `shared-types` 是 monorepo workspace package（`@website-v2/shared-types`），前後端都可 import，統一型別避免手刻字串造成 typo。
+
+---
+
+## 5. 重要設計慣例（快速參考）
+
+| 問題 | 正確做法 |
+|------|---------|
+| 瀏覽器端 API URL | `resolveApiBaseUrl()`，**不寫死 localhost** |
+| 登入/登出後導頁 | `window.location.href = '/admin'`，不用 `router.push`（避免快取問題） |
+| Prisma 含關聯的查詢型別 | `satisfies Prisma.XxxSelect` + `Prisma.XxxGetPayload<{ select: typeof CONST }>` |
+| 呼叫空 body 的 PATCH/POST | 帶 `Content-Type: application/json` + body `'{}'`，否則 NestJS 415 |
+| Schema 加新欄位後 | 進 api 容器執行 `npx prisma generate` 再重新 build |
+| API build 輸出路徑 | `dist/src/main.js`（不是 `dist/main.js`） |
+| Web build 啟動指令 | `node_modules/next/dist/bin/next start apps/web -p 3000`（從 `/workspace` 執行） |
