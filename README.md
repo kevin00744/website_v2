@@ -1,6 +1,6 @@
 # 璨妍 ERP 後台管理系統
 
-> 版本：website_v2　｜　最後更新：2026-08-09
+> 版本：website_v2　｜　最後更新：2026-11-15
 
 ---
 
@@ -11,32 +11,31 @@ cd /Users/tsanyen/Documents/website/website_v2
 docker compose up -d
 sleep 25
 docker exec -d website_v2_api sh -c "cd /workspace/apps/api && node dist/src/main.js > /tmp/api.log 2>&1"
-docker exec -d website_v2_web sh -c "cd /workspace && node_modules/next/dist/bin/next start apps/web -p 3000 > /tmp/web.log 2>&1"
+docker exec -d website_v2_web sh -c "cd /workspace/apps/web && PORT=3000 /workspace/node_modules/.bin/next start > /tmp/web.log 2>&1"
 ```
 
-開啟 → http://localhost/admin
+開啟 → https://tsanyentest.com/admin　或　http://localhost/admin
 
-> **若 dist 不存在**（首次或容器重建後）：先執行 `docker exec website_v2_api sh -c "cd /workspace/apps/api && npm run build"` 再啟動 API。
+> **若 dist 不存在**（首次或容器重建後）：先執行 `docker exec website_v2_api sh -c "cd /workspace/apps/api && npx prisma generate && npm run build"` 再啟動 API。
 > 詳細步驟見 [Start.md](./Start.md)，系統說明見 [SYSTEM.md](./SYSTEM.md)。
 
 ---
 
 ## 系統概述
 
-璨妍生技品牌的**分店 ERP 後台系統**，供各分店店長、員工、總部管理員及代理商日常操作使用。
+璨妍生技品牌的**單店 ERP 後台系統**，供分店店長、員工、會計及總部管理員日常操作使用。
 
 | 模組 | 功能 |
 |------|------|
 | 顧客管理（CRM） | 建檔、同意書電子簽名、療程紀錄、照片 |
 | POS 結帳 | 單次消費、儲值扣點、課程扣堂，多重付款 |
-| 庫存管理 | 各分店庫存、補貨請求、庫存調撥 |
+| 庫存管理 | 分店庫存、補貨請求 |
 | 財務帳務 | 收入/支出 + 備用金獨立系統（雙軌） |
 | 打卡/考勤 | 上下班打卡、月份統計、業績 dashboard |
-| 即時通訊 | WebSocket 一對一聊天、未讀數即時更新 |
-| 分店管理 | 分店 CRUD、員工帳號、功能開關設定 |
-| 帳號管理 | 8 種角色 RBAC、帳號建立矩陣 |
+| 分店管理 | 員工帳號、功能開關設定 |
+| 帳號管理 | 5 種角色 RBAC、多帳號 PIN 切換 |
 
-> 公開形象官網（CMS）已於 2026-08 移除，根路徑 `/` 自動重導向 `/admin/login`。
+> 公開形象官網（CMS）已移除，根路徑 `/` 自動重導向 `/admin/login`。
 
 ---
 
@@ -49,8 +48,8 @@ docker exec -d website_v2_web sh -c "cd /workspace && node_modules/next/dist/bin
 | 資料庫 | PostgreSQL 16 |
 | ORM | Prisma 5 |
 | 容器 | Docker Compose（node:20-slim） |
+| 反向代理 | nginx:alpine（SSL 終止，port 80/443） |
 | 認證 | JWT + Cookie |
-| 即時通訊 | WebSocket（@nestjs/websockets） |
 | 樣式 | Tailwind CSS（kiosk design token） |
 | PDF 生成 | pdf-lib |
 
@@ -60,7 +59,10 @@ docker exec -d website_v2_web sh -c "cd /workspace && node_modules/next/dist/bin
 
 ```
 [瀏覽器 / iPad]
-    │ port 80
+    │ port 80/443
+    ▼
+website_v2_nginx（nginx，SSL 終止）
+    │ proxy_pass → web:3000
     ▼
 website_v2_web（Next.js 14）
     │ 內部：CMS_API_INTERNAL_URL=http://api:3000/api/v2
@@ -83,13 +85,11 @@ API build 輸出路徑為 `dist/src/main.js`（不是 `dist/main.js`）。
 |------|---------|
 | `system_admin` | 全部，無限制 |
 | `admin` | 全部，無限制 |
-| `general_agent` | 自己負責的區域（A/B/C） |
-| `dealer` | 自己負責的區域（A/B/C） |
 | `manager` | 自己所屬分店 |
 | `accountant` | 自己分店（限財務/考勤） |
 | `staff` | 自己分店（受限功能） |
 
-區域代碼：`A`=北部、`B`=中部、`C`=南部
+> 已移除：`dealer`、`general_agent`、`editor`、區域（region）概念
 
 ---
 
@@ -97,11 +97,12 @@ API build 輸出路徑為 `dist/src/main.js`（不是 `dist/main.js`）。
 
 | 服務 | URL |
 |------|-----|
-| 後台前端 | http://localhost/admin |
+| 後台（外網） | https://tsanyentest.com/admin |
+| 後台（本機） | http://localhost/admin |
 | API | http://localhost:3101/api/v2 |
-| 資料庫 | localhost:5433（DB: website_v2, user: website_v2_user） |
+| 資料庫 | localhost:5433（DB: website_v2, user: website_v2_user, pass: secret） |
 
-種子帳號密碼：**`Passw0rd!1`**（帳號：`system` / `admin` / `dealer-north` / `manager-default`）
+正式帳號：`kevin00744`（system_admin）
 
 ---
 
