@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
-import { Prisma, type Region, type Role } from '@prisma/client';
+import { Prisma, type Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppError } from '../common/errors/app-error';
 import type { AuthenticatedUser } from '../auth/types';
@@ -13,12 +13,9 @@ const USER_SELECT = {
   role: true,
   phone: true,
   storeId: true,
-  region: true,
   isActive: true,
-  dealerId: true,
   parentId: true,
   store: { select: { name: true } },
-  dealer: { select: { id: true, name: true } },
   parent: { select: { id: true, name: true } },
 } satisfies Prisma.UserSelect;
 
@@ -28,15 +25,12 @@ export interface UserSummary {
   id: number;
   username: string;
   name: string;
-  email: string;
+  email: string | null;
   role: Role;
   phone: string | null;
   storeId: number | null;
   storeName: string | null;
-  region: Region | null;
   isActive: boolean;
-  dealerId: number | null;
-  dealerName: string | null;
   parentId: number | null;
   creatorName: string | null;
 }
@@ -44,11 +38,10 @@ export interface UserSummary {
 interface CreateUserInput {
   username: string;
   name: string;
-  email: string;
+  email?: string;
   password: string;
   role: Role;
   storeId?: number;
-  region?: Region;
   phone?: string;
 }
 
@@ -58,28 +51,24 @@ interface UpdateUserInput {
   email?: string;
   role?: Role;
   storeId?: number;
-  region?: Region;
   phone?: string;
   isActive?: boolean;
 }
 
-/** system_admin 帳號不可被任何人管理（除了自己改密碼），這是最高層級的保護規則 */
+/** system_admin 帳號不可被任何人管理（除了自己改密碼） */
 const PROTECTED_ROLE: Role = 'system_admin';
 
 const MIN_PASSWORD_LENGTH = 8;
 
 /**
- * 角色建立矩陣：鍵為「建立者角色」，值為「允許建立的目標角色清單」。
- * system_admin 可建立任何角色（不受此矩陣限制，在 service 層直接放行）。
+ * 角色建立矩陣：
+ * - system_admin / admin：不受限（可建立任何角色）
+ * - manager：只能建立 staff
  */
 const CREATOR_ROLE_MATRIX: Partial<Record<Role, Role[]>> = {
-  general_agent: ['dealer'],
-  dealer: ['manager', 'staff', 'accountant'],
-  manager: ['staff', 'accountant'],
+  admin: ['manager', 'accountant', 'staff'],
+  manager: ['accountant', 'staff'],
 };
-
-/** 只有 system_admin 能變更任何人的 role；其他角色修改自己或別人的 role 均禁止 */
-const ROLE_CHANGER: Role = 'system_admin';
 
 @Injectable()
 export class UsersService {
@@ -88,15 +77,9 @@ export class UsersService {
   async listUsers(actor: AuthenticatedUser): Promise<UserSummary[]> {
     let where: Prisma.UserWhereInput = { deletedAt: null };
 
-    if (actor.role === 'general_agent') {
-      // 總代理看同區域的所有 dealer（不限自己建立的）
-      where = { deletedAt: null, role: 'dealer', region: actor.region ?? 'NONE' as Region };
-    } else if (actor.role === 'dealer') {
-      // dealer 看自己底下的 manager/staff/accountant
-      where = { deletedAt: null, dealerId: actor.id };
-    } else if (actor.role === 'manager') {
-      // 店長只看同一分店的 staff/accountant
-      where = { deletedAt: null, storeId: actor.storeId ?? -1, role: { in: ['staff', 'accountant'] } };
+    if (actor.role === 'manager') {
+      // 店長只看同一分店的 staff
+      where = { deletedAt: null, storeId: actor.storeId ?? -1, role: { in: ['accountant', 'staff'] } };
     }
     // admin / system_admin 看全部
 
@@ -113,14 +96,12 @@ export class UsersService {
     if (actor.role !== 'system_admin') {
       this.assertCreatorCanAssign(actor.role, input.role);
     }
-    this.assertRoleFieldsValid(input.role, input.storeId, input.region);
 
     const username = input.username?.trim();
     if (!username) throw new AppError('USER_USERNAME_REQUIRED', 'username is required');
     const name = input.name?.trim();
     if (!name) throw new AppError('USER_NAME_REQUIRED', 'name is required');
-    const email = input.email?.trim();
-    if (!email) throw new AppError('USER_EMAIL_REQUIRED', 'email is required');
+    const email = input.email?.trim() || null;
     if (!input.password || input.password.length < MIN_PASSWORD_LENGTH) {
       throw new AppError('USER_PASSWORD_TOO_SHORT', 'password must be at least 8 characters');
     }
@@ -128,41 +109,14 @@ export class UsersService {
     const existingUsername = await this.prisma.user.findFirst({ where: { username, deletedAt: null } });
     if (existingUsername) throw new AppError('USER_USERNAME_EXISTS', `username ${username} already exists`, 409);
 
-    const existingEmail = await this.prisma.user.findFirst({ where: { email, deletedAt: null } });
-    if (existingEmail) throw new AppError('USER_EMAIL_EXISTS', `email ${email} already exists`, 409);
-
-    // Lookup store for storeId-based roles to validate and auto-set region
-    let storeRegion: Region | null = null;
-    if ((input.role === 'manager' || input.role === 'staff' || input.role === 'accountant') && input.storeId) {
-      const store = await this.prisma.store.findFirst({ where: { id: input.storeId, deletedAt: null } });
-      if (!store) throw new AppError('STORE_NOT_FOUND', 'selected store does not exist', 404);
-      if ((actor.role === 'dealer' || actor.role === 'general_agent') && store.region !== actor.region) {
-        throw new AppError('STORE_NOT_IN_REGION', "selected store is outside dealer's region", 403);
-      }
-      storeRegion = store.region;
+    if (email) {
+      const existingEmail = await this.prisma.user.findFirst({ where: { email, deletedAt: null } });
+      if (existingEmail) throw new AppError('USER_EMAIL_EXISTS', `email ${email} already exists`, 409);
     }
 
-    // 總代理只能在自己區域內開設代理帳號，且自動填入區域
-    if (actor.role === 'general_agent' && input.role === 'dealer') {
-      if (input.region && input.region !== actor.region) {
-        throw new AppError('REGION_MISMATCH', '總代理只能在自己的區域內建立代理帳號', 403);
-      }
-      if (!input.region) {
-        input = { ...input, region: actor.region ?? undefined };
-      }
-    }
-
-    // 自動計算 dealerId：
-    // - 建立者是 dealer → dealerId = actor.id
-    // - 建立者是 manager（屬於某 dealer）→ dealerId = actor.dealerId
-    // - general_agent 建立 dealer → dealerId = null（dealer 本身不需要 dealerId）
-    // - system_admin/admin 建立任何角色 → dealerId = null（由管理員自行帶入或留空）
-    let dealerId: number | null = null;
-    if (actor.role === 'dealer') {
-      dealerId = actor.id;
-    } else if (actor.role === 'manager' && actor.dealerId) {
-      dealerId = actor.dealerId;
-    }
+    // 單店模式：所有角色一律自動指派到唯一的分店
+    const store = await this.prisma.store.findFirst({ where: { deletedAt: null, isActive: true } });
+    const storeId = store?.id ?? null;
 
     const passwordHash = await bcrypt.hash(input.password, 10);
     const user = await this.prisma.user.create({
@@ -172,11 +126,9 @@ export class UsersService {
         email,
         password: passwordHash,
         role: input.role,
-        storeId: (input.role === 'manager' || input.role === 'staff' || input.role === 'accountant') ? (input.storeId ?? null) : null,
-        region: (input.role === 'dealer' || input.role === 'general_agent') ? (input.region ?? null) : storeRegion,
+        storeId,
         phone: input.phone,
         parentId: actor.id,
-        dealerId,
       },
       select: USER_SELECT,
     });
@@ -192,31 +144,16 @@ export class UsersService {
       throw new AppError('PERMISSION_DENIED', 'system_admin account can only be managed by itself', 403);
     }
 
-    // 角色變更：只有 system_admin 可以改任何人的 role
+    // 角色變更：只有 system_admin / admin 可以改角色
     if (input.role !== undefined && input.role !== target.role) {
-      if (actor.role !== ROLE_CHANGER) {
-        throw new AppError('PERMISSION_DENIED', 'only system_admin can change roles', 403);
+      if (actor.role !== 'system_admin' && actor.role !== 'admin') {
+        throw new AppError('PERMISSION_DENIED', 'only admin can change roles', 403);
       }
     }
 
-    // 禁止自己修改自己的 role（即使是 system_admin，防止意外降級鎖死）
+    // 禁止自己修改自己的 role
     if (input.role !== undefined && actor.id === id) {
       throw new AppError('PERMISSION_DENIED', 'cannot change your own role', 403);
-    }
-
-    const nextRole = input.role ?? target.role;
-    this.assertRoleFieldsValid(
-      nextRole,
-      input.storeId ?? target.storeId ?? undefined,
-      input.region ?? target.region ?? undefined,
-    );
-
-    // Auto-set region from store for store-based roles
-    let updatedStoreRegion: Region | null | undefined = undefined;
-    const effectiveStoreId = input.storeId ?? target.storeId;
-    if ((nextRole === 'manager' || nextRole === 'staff' || nextRole === 'accountant') && effectiveStoreId) {
-      const store = await this.prisma.store.findFirst({ where: { id: effectiveStoreId, deletedAt: null } });
-      if (store) updatedStoreRegion = store.region;
     }
 
     // 檢查 username 唯一性
@@ -233,6 +170,7 @@ export class UsersService {
       if (existing) throw new AppError('USER_EMAIL_EXISTS', `email ${e} already exists`, 409);
     }
 
+    const nextRole = input.role ?? target.role;
     const user = await this.prisma.user.update({
       where: { id },
       data: {
@@ -240,10 +178,9 @@ export class UsersService {
         name: input.name?.trim(),
         email: input.email?.trim(),
         role: input.role,
-        storeId: (nextRole === 'manager' || nextRole === 'staff' || nextRole === 'accountant')
+        storeId: (nextRole === 'manager' || nextRole === 'staff')
           ? (input.storeId ?? target.storeId)
           : null,
-        region: (nextRole === 'dealer' || nextRole === 'general_agent') ? (input.region ?? target.region) : (updatedStoreRegion !== undefined ? updatedStoreRegion : null),
         phone: input.phone,
         isActive: input.isActive,
       },
@@ -304,7 +241,6 @@ export class UsersService {
     await this.prisma.user.update({ where: { id }, data: { deletedAt: new Date(), isActive: false } });
   }
 
-  /** 驗證建立者角色是否有權建立目標角色（system_admin 不走此方法，直接放行） */
   private assertCreatorCanAssign(creatorRole: Role, targetRole: Role) {
     const allowed = CREATOR_ROLE_MATRIX[creatorRole];
     if (!allowed || !allowed.includes(targetRole)) {
@@ -313,27 +249,6 @@ export class UsersService {
         `role ${creatorRole} cannot create accounts with role ${targetRole}`,
         403,
       );
-    }
-  }
-
-  async assignUserDealer(userId: number, dealerId: number | null): Promise<UserSummary> {
-    const user = await this.prisma.user.findFirst({ where: { id: userId, deletedAt: null } });
-    if (!user) throw new AppError('USER_NOT_FOUND', '找不到此帳號', 404);
-    if (dealerId !== null) {
-      const dealer = await this.prisma.user.findFirst({ where: { id: dealerId, deletedAt: null, role: 'dealer' } });
-      if (!dealer) throw new AppError('DEALER_NOT_FOUND', '找不到此代理帳號', 404);
-    }
-    const updated = await this.prisma.user.update({ where: { id: userId }, data: { dealerId }, select: USER_SELECT });
-    return toSummary(updated);
-  }
-
-  private assertRoleFieldsValid(role: Role, storeId?: number, region?: Region) {
-    if (role === 'manager' && !storeId) {
-      throw new AppError('USER_STORE_REQUIRED', 'manager requires a storeId', 400);
-    }
-    if ((role === 'dealer' || role === 'general_agent') && !region) {
-      // general_agent / dealer 都需要區域
-      // 但 general_agent 其實是總代理，region 可選——視業務需求放寬
     }
   }
 }
@@ -348,10 +263,7 @@ function toSummary(user: UserRow): UserSummary {
     phone: user.phone,
     storeId: user.storeId,
     storeName: user.store?.name ?? null,
-    region: user.region,
     isActive: user.isActive,
-    dealerId: user.dealerId,
-    dealerName: user.dealer?.name ?? null,
     parentId: user.parentId,
     creatorName: user.parent?.name ?? null,
   };

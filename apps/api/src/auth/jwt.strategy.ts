@@ -28,7 +28,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: JwtPayload): Promise<AuthenticatedUser> {
     const user = await this.prisma.user.findFirst({
       where: { id: payload.sub, deletedAt: null, isActive: true },
-      select: { id: true, username: true, email: true, name: true, role: true, storeId: true, region: true, dealerId: true },
+      select: { id: true, username: true, email: true, name: true, role: true, storeId: true },
     });
     if (!user) {
       throw new AppError('AUTH_SESSION_EXPIRED', 'user not found or deactivated', 401);

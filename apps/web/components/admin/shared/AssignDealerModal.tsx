@@ -59,7 +59,6 @@ export function AssignDealerModal({ open, targetName, currentDealerId, dealers, 
                 className="accent-kiosk-primary"
               />
               <span className="text-kiosk-base font-semibold text-slate-800">{d.name}</span>
-              {d.region && <span className="text-sm text-slate-400">（{d.region === 'A' ? '北部' : d.region === 'B' ? '中部' : '南部'}）</span>}
             </label>
           ))}
           {dealers.length === 0 && (

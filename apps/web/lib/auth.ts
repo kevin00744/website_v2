@@ -8,10 +8,8 @@ export interface AuthUser {
   username: string;
   email: string;
   name: string;
-  role: 'system_admin' | 'general_agent' | 'admin' | 'editor' | 'dealer' | 'manager' | 'accountant' | 'staff';
+  role: 'system_admin' | 'admin' | 'manager' | 'accountant' | 'staff';
   storeId: number | null;
-  region: 'A' | 'B' | 'C' | null;
-  dealerId: number | null;
   phone: string | null;
   /** 登入時從後端取得，store 功能開關（例如 { pos: true, attendance: true }）。
    *  admin/system_admin 不受此限制（由 hasFeature 的超集邏輯處理）。 */
@@ -37,9 +35,9 @@ function clearCookie(name: string) {
   document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
 }
 
-export function saveAuth(token: string, user: AuthUser) {
-  setCookie(TOKEN_COOKIE, token, 1);
-  setCookie(USER_COOKIE, JSON.stringify(user), 1);
+export function saveAuth(token: string, user: AuthUser, rememberDays = 1) {
+  setCookie(TOKEN_COOKIE, token, rememberDays);
+  setCookie(USER_COOKIE, JSON.stringify(user), rememberDays);
 }
 
 export function getAuthToken(): string | undefined {

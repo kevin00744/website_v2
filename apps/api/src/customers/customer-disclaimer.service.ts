@@ -16,7 +16,7 @@ import {
 import { decodeBase64Png } from './document-pdf.util';
 import { loadCustomerFile, saveCustomerFile } from './customer-file-storage.util';
 
-const VISIBILITY_SELECT = { storeId: true, store: { select: { region: true } } } as const;
+const VISIBILITY_SELECT = { storeId: true } as const;
 
 interface SignDisclaimerInput {
   signatureImageUrl: string;
@@ -68,10 +68,10 @@ export class CustomerDisclaimerService {
         customerCode: true,
         disclaimerStaffSignedAt: true,
         storeId: true,
-        store: { select: { name: true, code: true, region: true } },
+        store: { select: { name: true, code: true } },
       },
     });
-    if (!customer || !canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
+    if (!customer || !canActorAccessCustomer(actor, { storeId: customer.storeId })) {
       throw new AppError('CUSTOMER_NOT_FOUND', `customer ${customerId} not found`, 404);
     }
     if (customer.disclaimerStaffSignedAt) {
@@ -180,10 +180,10 @@ export class CustomerDisclaimerService {
         nationalId: true,
         customerCode: true,
         storeId: true,
-        store: { select: { code: true, region: true } },
+        store: { select: { code: true } },
       },
     });
-    if (!customer || !canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
+    if (!customer || !canActorAccessCustomer(actor, { storeId: customer.storeId })) {
       throw new AppError('CUSTOMER_NOT_FOUND', `customer ${customerId} not found or not visible to actor ${actor.id}`, 404);
     }
     if (!customer.disclaimerPath || !customer.disclaimerStaffSignedAt) {
@@ -295,7 +295,7 @@ export class CustomerDisclaimerService {
       where: { id: customerId, deletedAt: null },
       select: { disclaimerPath: true, ...VISIBILITY_SELECT },
     });
-    if (!customer || !canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
+    if (!customer || !canActorAccessCustomer(actor, { storeId: customer.storeId })) {
       throw new AppError('CUSTOMER_NOT_FOUND', `customer ${customerId} not found or not visible to actor ${actor.id}`, 404);
     }
     if (!customer.disclaimerPath) {

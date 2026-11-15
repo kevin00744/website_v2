@@ -22,11 +22,11 @@ export class CustomerCoursesService {
       where: { id: courseId },
       include: {
         serviceItem: { select: { id: true, name: true, price: true } },
-        customer: { select: { id: true, storeId: true, store: { select: { region: true } } } },
+        customer: { select: { id: true, storeId: true, store: true } },
       },
     });
     if (!course) throw new AppError('COURSE_NOT_FOUND', '找不到此課程', 404);
-    if (!canActorAccessCustomer(actor, { storeId: course.customer.storeId, storeRegion: course.customer.store.region })) {
+    if (!canActorAccessCustomer(actor, { storeId: course.customer.storeId })) {
       throw new AppError('PERMISSION_DENIED', '無權限存取此顧客資料', 403);
     }
     return course;

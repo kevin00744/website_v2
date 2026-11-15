@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
-import type { Region, Role } from '@prisma/client';
+import type { Role } from '@prisma/client';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -14,7 +14,6 @@ interface CreateUserDto {
   password: string;
   role: Role;
   storeId?: number;
-  region?: Region;
   phone?: string;
 }
 
@@ -24,7 +23,6 @@ interface UpdateUserDto {
   email?: string;
   role?: Role;
   storeId?: number;
-  region?: Region;
   phone?: string;
   isActive?: boolean;
 }
@@ -33,34 +31,32 @@ interface ResetPasswordDto {
   newPassword: string;
 }
 
-/**
- * 帳號管理路由：依角色分層開放。
- * - GET / POST：system_admin, admin, general_agent, dealer, manager 均可進入（各自有資料範圍限制）
- * - PATCH / DELETE / 重設密碼：admin 以上（system_admin 自動通過 RolesGuard 超集）
- */
 @Controller('users')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('system_admin')
+@Roles('admin')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
+  /** 所有登入者都可以更新自己的個人設定 */
   @Patch('me')
-  @Roles('staff', 'manager', 'accountant', 'dealer', 'general_agent', 'admin', 'editor')
+  @Roles('staff', 'manager', 'admin', 'system_admin')
   updateMe(
     @CurrentUser() actor: AuthenticatedUser,
-    @Body() dto: { username?: string; password?: string; phone?: string },
+    @Body() dto: { username?: string; password?: string; phone?: string; name?: string; email?: string },
   ) {
     return this.usersService.updateSelf(actor.id, dto);
   }
 
+  /** admin/manager 都可以列出帳號（manager 只看自己分店的 staff） */
   @Get()
-  @Roles('general_agent', 'dealer', 'manager')
+  @Roles('manager')
   list(@CurrentUser() actor: AuthenticatedUser) {
     return this.usersService.listUsers(actor);
   }
 
+  /** admin/manager 都可以建立帳號（依矩陣限制可建立的角色） */
   @Post()
-  @Roles('general_agent', 'dealer', 'manager')
+  @Roles('manager')
   create(@CurrentUser() actor: AuthenticatedUser, @Body() dto: CreateUserDto) {
     return this.usersService.createUser(actor, dto);
   }
@@ -74,17 +70,9 @@ export class UsersController {
     return this.usersService.updateUser(actor, id, dto);
   }
 
-  /** 指定（或清除）帳號的負責代理，僅 admin/system_admin 可操作 */
-  @Patch(':id/dealer')
-  @Roles('admin')
-  assignDealer(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: { dealerId: number | null },
-  ) {
-    return this.usersService.assignUserDealer(id, dto.dealerId ?? null);
-  }
-
+  /** 管理員強制重設密碼（不需舊密碼），manager 也可重設自己分店的 staff 密碼 */
   @Patch(':id/password')
+  @Roles('manager')
   resetPassword(
     @CurrentUser() actor: AuthenticatedUser,
     @Param('id', ParseIntPipe) id: number,

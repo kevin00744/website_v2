@@ -14,10 +14,7 @@ interface UserTableProps {
   deletingId?: number;
   readOnly?: boolean;
   showCreator?: boolean;
-  onAssignDealer?: (user: UserSummary) => void;
 }
-
-const REGION_LABEL: Record<string, string> = { A: '北部', B: '中部', C: '南部' };
 
 function canManage(target: UserSummary, currentUserId: number): boolean {
   return target.role !== 'system_admin' || target.id === currentUserId;
@@ -35,10 +32,7 @@ export function UserTable({
   deletingId,
   readOnly,
   showCreator,
-  onAssignDealer,
 }: UserTableProps) {
-  const isAdmin = currentUserRole === 'admin' || currentUserRole === 'system_admin';
-
   return (
     <table className="hidden w-full border-separate border-spacing-y-3 md:table">
       <thead>
@@ -46,8 +40,6 @@ export function UserTable({
           <th className="px-4">姓名</th>
           <th className="px-4">帳號</th>
           <th className="px-4">角色</th>
-          <th className="px-4">所屬分店/區域</th>
-          {isAdmin && <th className="px-4">負責代理</th>}
           {showCreator && <th className="px-4">建立者</th>}
           <th className="px-4">狀態</th>
           <th className="px-4" />
@@ -60,24 +52,7 @@ export function UserTable({
             <tr key={user.id} className="rounded-kiosk bg-white text-kiosk-base text-slate-800 shadow-sm">
               <td className="rounded-l-kiosk px-4 py-5 font-semibold">{user.name}</td>
               <td className="px-4 py-5 font-mono text-slate-500">{user.username}</td>
-              <td className="px-4 py-5">{ROLE_LABEL[user.role]}</td>
-              <td className="px-4 py-5">
-                {user.storeName ?? (user.region ? REGION_LABEL[user.region] : '—')}
-              </td>
-              {isAdmin && (
-                <td className="px-4 py-5">
-                  {onAssignDealer ? (
-                    <button
-                      onClick={() => onAssignDealer(user)}
-                      className="text-kiosk-base text-slate-500 underline-offset-2 hover:text-kiosk-primary hover:underline"
-                    >
-                      {user.dealerName ?? '— 未指定'}
-                    </button>
-                  ) : (
-                    <span className="text-slate-500">{user.dealerName ?? '—'}</span>
-                  )}
-                </td>
-              )}
+              <td className="px-4 py-5">{(ROLE_LABEL as Record<string, string>)[user.role] ?? user.role}</td>
               {showCreator && (
                 <td className="px-4 py-5 text-slate-500">{user.creatorName ?? '—'}</td>
               )}

@@ -93,13 +93,11 @@ async function main() {
     create: {
       code: 'DEFAULT',
       name: '預設門店',
-      region: 'A',
-      regionSequence: 1,
     },
   });
 
   const systemAdmin = await prisma.user.upsert({
-    where: { email: 'system@website-v2.local' },
+    where: { username: 'system_admin' },
     update: { password: passwordHash },
     create: {
       username: 'system_admin',
@@ -111,7 +109,7 @@ async function main() {
   });
 
   const admin = await prisma.user.upsert({
-    where: { email: 'admin@website-v2.local' },
+    where: { username: 'admin' },
     update: { password: passwordHash },
     create: {
       username: 'admin',
@@ -123,7 +121,7 @@ async function main() {
   });
 
   const dealer = await prisma.user.upsert({
-    where: { email: 'dealer-north@website-v2.local' },
+    where: { username: 'dealer_north' },
     update: { password: passwordHash },
     create: {
       username: 'dealer_north',
@@ -131,12 +129,11 @@ async function main() {
       email: 'dealer-north@website-v2.local',
       password: passwordHash,
       role: 'dealer',
-      region: 'A',
     },
   });
 
   const manager = await prisma.user.upsert({
-    where: { email: 'manager-default@website-v2.local' },
+    where: { username: 'manager_default' },
     update: { password: passwordHash },
     create: {
       username: 'manager_default',
@@ -149,7 +146,7 @@ async function main() {
   });
 
   const editor = await prisma.user.upsert({
-    where: { email: 'editor@website-v2.local' },
+    where: { username: 'editor' },
     update: { password: passwordHash },
     create: {
       username: 'editor',

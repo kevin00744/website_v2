@@ -16,7 +16,7 @@ import { loadCustomerFile, saveCustomerFile } from './customer-file-storage.util
 
 const DOCUMENT_FILE_NAME = 'document.pdf';
 
-const VISIBILITY_SELECT = { storeId: true, store: { select: { region: true } } } as const;
+const VISIBILITY_SELECT = { storeId: true } as const;
 
 interface SignDocumentInput {
   signerRole: SignerRole;
@@ -49,7 +49,7 @@ export class CustomerDocumentService {
       where: { id: customerId, deletedAt: null },
       select: { id: true, documentCustomerSignedAt: true, documentStaffSignedAt: true, ...VISIBILITY_SELECT },
     });
-    if (!customer || !canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
+    if (!customer || !canActorAccessCustomer(actor, { storeId: customer.storeId })) {
       throw new AppError('CUSTOMER_NOT_FOUND', `customer ${customerId} not found or not visible to actor ${actor.id}`, 404);
     }
     if (customer.documentCustomerSignedAt && customer.documentStaffSignedAt) {
@@ -83,7 +83,7 @@ export class CustomerDocumentService {
         ...VISIBILITY_SELECT,
       },
     });
-    if (!customer || !canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
+    if (!customer || !canActorAccessCustomer(actor, { storeId: customer.storeId })) {
       throw new AppError('CUSTOMER_NOT_FOUND', `customer ${customerId} not found or not visible to actor ${actor.id}`, 404);
     }
     if (!customer.documentPath) {
@@ -178,7 +178,7 @@ export class CustomerDocumentService {
       where: { id: customerId, deletedAt: null },
       select: { documentPath: true, ...VISIBILITY_SELECT },
     });
-    if (!customer || !canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
+    if (!customer || !canActorAccessCustomer(actor, { storeId: customer.storeId })) {
       throw new AppError('CUSTOMER_NOT_FOUND', `customer ${customerId} not found or not visible to actor ${actor.id}`, 404);
     }
     if (!customer.documentPath) {

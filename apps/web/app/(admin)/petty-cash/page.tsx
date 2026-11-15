@@ -25,7 +25,6 @@ function today() {
 export default function PettyCashPage() {
   const [storeId, setStoreId] = useState<number | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
-  const [storeName, setStoreName] = useState('');
   const [logs, setLogs] = useState<PettyCashLog[]>();
   const [loadError, setLoadError] = useState<string>();
 
@@ -39,11 +38,17 @@ export default function PettyCashPage() {
   const [formSuccess, setFormSuccess] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
 
+  // 設定目標金額表單
+  const [targetAmount, setTargetAmount] = useState('');
+  const [targetNote, setTargetNote] = useState('');
+  const [targetError, setTargetError] = useState<string>();
+  const [targetSuccess, setTargetSuccess] = useState<string>();
+  const [targetSubmitting, setTargetSubmitting] = useState(false);
+
   const loadBalance = useCallback(async (sid: number) => {
     try {
       const b = await getPettyCashBalance(sid);
       setBalance(b.balance);
-      setStoreName(b.storeName);
     } catch { /* 靜默 */ }
   }, []);
 
@@ -85,16 +90,37 @@ export default function PettyCashPage() {
     }
   }
 
+  async function handleSetTarget() {
+    if (!storeId || balance === null) return;
+    setTargetError(undefined);
+    setTargetSuccess(undefined);
+    const target = Number(targetAmount);
+    if (!Number.isInteger(target) || target < 0) { setTargetError('目標金額必須為非負整數'); return; }
+    if (target === balance) { setTargetError('目標金額與目前餘額相同，無需調整'); return; }
+    setTargetSubmitting(true);
+    try {
+      const diff = Math.abs(target - balance);
+      const action = target > balance ? 'add' : 'remove';
+      const result = await adjustPettyCash(storeId, { action, amount: diff, note: targetNote.trim() || `設定目標金額 $${target}` });
+      setTargetSuccess(`備用金已調整至 $${result.balanceAfter.toLocaleString()}`);
+      setTargetAmount('');
+      setTargetNote('');
+      void loadBalance(storeId);
+      void loadLogs(storeId, from, to);
+    } catch (err) {
+      setTargetError(err instanceof ApiError ? err.message : '操作失敗');
+    } finally {
+      setTargetSubmitting(false);
+    }
+  }
+
   if (!storeId) {
     return <p className="py-16 text-center text-kiosk-base text-slate-500">您的帳號未指定所屬分店。</p>;
   }
 
   return (
     <div className="mx-auto max-w-2xl space-y-8">
-      <div className="flex items-center justify-between">
-        <h1 className="text-kiosk-xl font-bold text-slate-900">備用金管理</h1>
-        {storeName && <span className="text-sm text-slate-400">{storeName}</span>}
-      </div>
+      <h1 className="text-kiosk-xl font-bold text-slate-900">備用金管理</h1>
 
       {/* ── 現在餘額 ── */}
       <div className="rounded-kiosk border-4 border-amber-300 bg-amber-50 p-6 text-center">
@@ -136,6 +162,34 @@ export default function PettyCashPage() {
         </div>
       </div>
 
+      {/* ── 設定目標金額 ── */}
+      <div className="rounded-kiosk border-2 border-blue-200 bg-white p-5">
+        <h2 className="mb-1 text-kiosk-base font-bold text-slate-800">設定目標金額</h2>
+        <p className="mb-4 text-sm text-slate-500">輸入希望備用金達到的金額，系統自動計算補充或移除的差額。</p>
+        <div className="flex flex-col gap-3">
+          <KioskInput
+            label="目標金額"
+            required
+            type="number"
+            min={0}
+            placeholder={balance !== null ? `目前：$${balance.toLocaleString()}` : '例：2000'}
+            value={targetAmount}
+            onChange={(e) => { setTargetAmount(e.target.value); setTargetError(undefined); setTargetSuccess(undefined); }}
+          />
+          <KioskInput
+            label="備注（選填）"
+            placeholder="例：月初補足備用金"
+            value={targetNote}
+            onChange={(e) => setTargetNote(e.target.value)}
+          />
+          {targetError && <p className="text-kiosk-base font-semibold text-kiosk-danger">⚠️ {targetError}</p>}
+          {targetSuccess && <p className="text-kiosk-base font-semibold text-kiosk-success">✓ {targetSuccess}</p>}
+          <KioskButton variant="primary" fullWidth onClick={() => void handleSetTarget()} disabled={targetSubmitting || balance === null}>
+            設定目標金額
+          </KioskButton>
+        </div>
+      </div>
+
       {/* ── 異動歷史 ── */}
       <div>
         <div className="mb-3 flex flex-wrap items-center gap-3">
@@ -149,10 +203,10 @@ export default function PettyCashPage() {
 
         {loadError && <p className="text-kiosk-base font-semibold text-kiosk-danger">⚠️ {loadError}</p>}
         {!logs && !loadError && <p className="text-kiosk-base text-slate-400">載入中…</p>}
-        {logs && logs.length === 0 && (
+        {logs && logs.filter(l => l.action !== 'outsource_deduct').length === 0 && (
           <p className="rounded-kiosk bg-slate-50 p-6 text-center text-kiosk-base text-slate-500">此期間無異動紀錄。</p>
         )}
-        {logs && logs.length > 0 && (
+        {logs && logs.filter(l => l.action !== 'outsource_deduct').length > 0 && (
           <div className="overflow-hidden rounded-kiosk border border-slate-200 bg-white">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-slate-500">
@@ -166,7 +220,7 @@ export default function PettyCashPage() {
                 </tr>
               </thead>
               <tbody>
-                {logs.map((log) => (
+                {logs.filter(l => l.action !== 'outsource_deduct').map((log) => (
                   <tr key={log.id} className="border-t border-slate-100 hover:bg-slate-50">
                     <td className="px-4 py-3 font-mono text-xs text-slate-500">
                       {new Date(log.createdAt).toLocaleString('zh-TW', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}

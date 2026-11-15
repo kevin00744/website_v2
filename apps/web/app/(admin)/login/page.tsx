@@ -13,6 +13,7 @@ import { KioskInput } from '@/components/admin/kiosk/KioskInput';
 export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string>();
+  const [rememberDevice, setRememberDevice] = useState(false);
 
   const {
     register,
@@ -29,16 +30,9 @@ export default function LoginPage() {
     setSubmitError(undefined);
     try {
       const result = await login(values.username, values.password);
-      saveAuth(result.accessToken, result.user);
-      // 故意用整頁導航（不是 router.push）：AdminShell 是 (admin) layout 裡常駐的 client component，
-      // 它的 useEffect(() => setUser(getAuthUser()), []) 只在第一次掛載時讀一次 cookie——
-      // 用 router.push 做 client-side 路由切換不會重新掛載 layout，導致登入後側邊選單（左側 bar）
-      // 還停留在「未登入」的畫面，要手動重新整理才會正確顯示。整頁導航會讓 layout 重新掛載，
-      // 一進 /admin 就能立刻讀到剛剛存好的 cookie，不需要使用者自己刷新。
+      saveAuth(result.accessToken, result.user, rememberDevice ? 30 : 1);
       window.location.href = '/admin';
     } catch (error) {
-      // 帳號不存在跟密碼錯誤都只會收到同一個白話文訊息（AUTH_INVALID_CREDENTIALS 轉譯），
-      // 不會把伺服器的技術訊息/狀態碼顯示出來，也絕不用瀏覽器原生 alert()。
       setSubmitError(error instanceof ApiError ? error.message : '登入失敗，請稍後再試');
     } finally {
       setSubmitting(false);
@@ -46,43 +40,60 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-[70vh] flex-col items-center justify-center px-4">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-slate-100 px-4">
+      {/* 品牌區 */}
+      <div className="mb-8 text-center">
+        <div className="mb-2 text-5xl">✨</div>
+        <h1 className="text-kiosk-xl font-bold text-kiosk-primary">璨妍管理後台</h1>
+        <p className="mt-1 text-slate-500">請登入您的帳號以繼續</p>
+      </div>
+
       <form
         onSubmit={handleSubmit(onSubmit)}
-        className="flex w-full max-w-md flex-col gap-6 rounded-kiosk border-2 border-slate-200 bg-white p-8 shadow-sm md:p-10"
+        className="w-full max-w-sm rounded-2xl bg-white p-8 shadow-lg"
       >
-        <h1 className="text-center text-kiosk-xl font-bold text-slate-900">店員登入</h1>
+        <div className="flex flex-col gap-5">
+          <KioskInput
+            label="帳號"
+            type="text"
+            required
+            autoComplete="username"
+            placeholder="請輸入登入帳號"
+            errorMessage={errors.username?.message}
+            isValid={Boolean(dirtyFields.username) && !errors.username}
+            {...register('username')}
+          />
+          <KioskInput
+            label="密碼"
+            type="password"
+            required
+            autoComplete="current-password"
+            placeholder="請輸入密碼"
+            errorMessage={errors.password?.message}
+            isValid={Boolean(dirtyFields.password) && !errors.password}
+            {...register('password')}
+          />
 
-        <KioskInput
-          label="帳號 (username)"
-          type="text"
-          required
-          autoComplete="username"
-          placeholder="請輸入登入帳號"
-          errorMessage={errors.username?.message}
-          isValid={Boolean(dirtyFields.username) && !errors.username}
-          {...register('username')}
-        />
-        <KioskInput
-          label="密碼"
-          type="password"
-          required
-          autoComplete="current-password"
-          placeholder="請輸入密碼"
-          errorMessage={errors.password?.message}
-          isValid={Boolean(dirtyFields.password) && !errors.password}
-          {...register('password')}
-        />
+          <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
+            <input
+              type="checkbox"
+              className="h-4 w-4 accent-kiosk-primary"
+              checked={rememberDevice}
+              onChange={(e) => setRememberDevice(e.target.checked)}
+            />
+            記住此裝置（30 天免重新登入）
+          </label>
 
-        {submitError && (
-          <p className="text-kiosk-base font-semibold text-kiosk-danger" role="alert">
-            ⚠️ {submitError}
-          </p>
-        )}
+          {submitError && (
+            <p className="rounded-lg bg-red-50 px-4 py-3 text-sm font-semibold text-kiosk-danger" role="alert">
+              ⚠️ {submitError}
+            </p>
+          )}
 
-        <KioskButton type="submit" variant="primary" fullWidth disabled={submitting}>
-          {submitting ? '登入中…' : '登入'}
-        </KioskButton>
+          <KioskButton type="submit" variant="primary" fullWidth disabled={submitting} className="mt-1">
+            {submitting ? '登入中…' : '登入'}
+          </KioskButton>
+        </div>
       </form>
     </div>
   );

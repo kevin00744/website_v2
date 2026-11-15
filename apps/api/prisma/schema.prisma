@@ -66,24 +66,18 @@ model User {
   /// 登入帳號（必填，唯一），不可用 email 登入
   username  String    @unique
   /// 僅用於未來忘記密碼 / 密碼重設發送驗證信，不可作為登入帳號
-  email     String    @unique
+  email     String?
   name      String
   password  String
   role      Role
   phone     String?
   storeId   Int?      @map("store_id")
   store     Store?    @relation(fields: [storeId], references: [id])
-  region    Region?
   isActive  Boolean   @default(true) @map("is_active")
   /// 建立者 ID（自引用），記錄該帳號由哪一個帳號建立
   parentId  Int?      @map("parent_id")
   parent    User?     @relation("UserParent", fields: [parentId], references: [id])
   children  User[]    @relation("UserParent")
-  /// 所屬代理 ID（FK → dealer 帳號），方便依代理做資料歸屬統計與過濾
-  dealerId  Int?      @map("dealer_id")
-  dealer    User?     @relation("UserDealer", fields: [dealerId], references: [id])
-  dealerUsers   User[]  @relation("UserDealer")
-  managedStores Store[] @relation("StoreDealer")
   createdAt DateTime  @default(now()) @map("created_at")
   updatedAt DateTime  @updatedAt @map("updated_at")
   deletedAt DateTime? @map("deleted_at")
@@ -123,22 +117,15 @@ model Store {
   id             Int       @id @default(autoincrement())
   code           String    @unique
   name           String
-  region         Region
-  regionSequence Int       @map("region_sequence")
   phone          String?
   address        String?
   note           String?
   isActive         Boolean   @default(true) @map("is_active")
   pettyCashBalance Int       @default(0)    @map("petty_cash_balance")
-  /// 分店功能開關，格式 { "pos": true, "attendance": true, "crm": true, "cms": true }
-  /// 未列出的 key 視同 false；admin/system_admin 不受此開關限制（由前端 hasFeature 處理超集邏輯）
   features         Json      @default("{}") @map("features")
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
   deletedAt        DateTime? @map("deleted_at")
-
-  dealerId  Int?      @map("dealer_id")
-  dealer    User?     @relation("StoreDealer", fields: [dealerId], references: [id])
 
   users     User[]
   customers Customer[]

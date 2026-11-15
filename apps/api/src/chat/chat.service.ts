@@ -32,7 +32,6 @@ export class ChatService {
   resolveOrgRooms(actor: AuthenticatedUser): string[] {
     const rooms: string[] = [];
     if (actor.storeId) rooms.push(`store_${actor.storeId}`);
-    if (actor.region) rooms.push(`region_${actor.region}`);
     return rooms;
   }
 
@@ -184,52 +183,29 @@ export class ChatService {
   private async resolveDefaultContactIds(subject: {
     id: number;
     role: AuthenticatedUser['role'];
-    region: AuthenticatedUser['region'];
     storeId: AuthenticatedUser['storeId'];
   }): Promise<number[]> {
     if (isAdminRole(subject.role)) {
       const users = await this.prisma.user.findMany({
-        where: { id: { not: subject.id }, deletedAt: null, isActive: true, role: { in: ['dealer', 'manager', 'admin', 'system_admin'] } },
+        where: { id: { not: subject.id }, deletedAt: null, isActive: true, role: { in: ['manager', 'admin', 'system_admin'] } },
         select: { id: true },
       });
       return users.map((user) => user.id);
     }
 
-    if (subject.role === 'dealer' || subject.role === 'general_agent') {
-      if (!subject.region) return [];
-      const [admins, managers] = await Promise.all([
-        this.prisma.user.findMany({
-          where: { deletedAt: null, isActive: true, role: { in: ['admin', 'system_admin'] } },
-          select: { id: true },
-        }),
-        this.prisma.user.findMany({
-          where: { deletedAt: null, isActive: true, role: 'manager', store: { region: subject.region } },
-          select: { id: true },
-        }),
-      ]);
-      return [...admins, ...managers].map((user) => user.id);
-    }
-
     if (subject.role === 'manager') {
       if (!subject.storeId) return [];
-      const store = await this.prisma.store.findUnique({ where: { id: subject.storeId }, select: { region: true } });
-      if (!store) return [];
-      const [admins, dealers, storeStaff] = await Promise.all([
+      const [admins, storeStaff] = await Promise.all([
         this.prisma.user.findMany({
           where: { deletedAt: null, isActive: true, role: { in: ['admin', 'system_admin'] } },
           select: { id: true },
         }),
-        this.prisma.user.findMany({
-          where: { deletedAt: null, isActive: true, role: 'dealer', region: store.region },
-          select: { id: true },
-        }),
-        // 同一分店的 staff 也在清單裡
         this.prisma.user.findMany({
           where: { deletedAt: null, isActive: true, role: 'staff', storeId: subject.storeId, id: { not: subject.id } },
           select: { id: true },
         }),
       ]);
-      return [...admins, ...dealers, ...storeStaff].map((user) => user.id);
+      return [...admins, ...storeStaff].map((user) => user.id);
     }
 
     // staff / accountant：自己店的店長 + 所有 admin + system_admin
@@ -274,7 +250,7 @@ export class ChatService {
 
     const contacts = await this.prisma.user.findMany({
       where: { id: { in: contactIds }, deletedAt: null, isActive: true },
-      select: { id: true, name: true, role: true, region: true },
+      select: { id: true, name: true, role: true },
       orderBy: [{ role: 'asc' }, { name: 'asc' }],
     });
     return contacts;
@@ -284,7 +260,7 @@ export class ChatService {
   async listManageableUsers() {
     return this.prisma.user.findMany({
       where: { deletedAt: null, isActive: true, role: { in: ['dealer', 'general_agent', 'manager', 'admin', 'system_admin'] } },
-      select: { id: true, name: true, role: true, region: true, storeId: true },
+      select: { id: true, name: true, role: true, storeId: true },
       orderBy: [{ role: 'asc' }, { name: 'asc' }],
     });
   }
@@ -292,7 +268,7 @@ export class ChatService {
   private async assertManageableTarget(targetUserId: number) {
     const target = await this.prisma.user.findFirst({
       where: { id: targetUserId, deletedAt: null },
-      select: { id: true, role: true, region: true, storeId: true },
+      select: { id: true, role: true, storeId: true },
     });
     if (!target) {
       throw new AppError('USER_NOT_FOUND', `user ${targetUserId} not found`, 404);

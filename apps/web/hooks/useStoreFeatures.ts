@@ -2,10 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { getAuthUser } from '@/lib/auth';
-import type { FeatureKey } from '@/lib/navigationConfig';
 
-export type StoreFeatures = Partial<Record<FeatureKey, boolean>>;
-// FeatureKey 已從 navigationConfig.ts 匯入，不包含 'cms'（CMS 改為純角色守門）
+export type StoreFeatures = Record<string, boolean>;
 
 /** 從 cookie 讀取目前登入者所屬分店的功能開關設定 */
 export function useStoreFeatures(): StoreFeatures | null {
@@ -23,7 +21,7 @@ export function useStoreFeatures(): StoreFeatures | null {
  */
 export function hasFeature(
   features: StoreFeatures | null,
-  key: FeatureKey,
+  key: string,
   role: string,
 ): boolean {
   if (role === 'admin' || role === 'system_admin') return true;

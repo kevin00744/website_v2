@@ -1,6 +1,5 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { AppError } from '../common/errors/app-error';
-import type { Region } from '@prisma/client';
 import { StoresService } from './stores.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -10,7 +9,6 @@ import type { AuthenticatedUser } from '../auth/types';
 
 interface CreateStoreDto {
   name: string;
-  region: Region;
   phone?: string;
   address?: string;
   note?: string;
@@ -117,17 +115,7 @@ export class StoresController {
     return this.storesService.deleteStoreStaff(actor, id, staffId);
   }
 
-  /** 指定（或清除）分店的負責代理，僅 admin/system_admin 可操作 */
-  @Patch(':id/dealer')
-  @Roles('admin')
-  assignDealer(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: { dealerId: number | null },
-  ) {
-    return this.storesService.updateStoreDealer(id, dto.dealerId ?? null);
-  }
-
-  /** 更新分店功能開關。manager 限操作自己的分店；admin/system_admin 任意分店 */
+/** 更新分店功能開關。manager 限操作自己的分店；admin/system_admin 任意分店 */
   @Patch(':id/features')
   @Roles('manager')
   async updateFeatures(

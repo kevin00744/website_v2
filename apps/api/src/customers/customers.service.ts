@@ -30,8 +30,6 @@ export interface CustomerListItem {
   customerCode: string | null;
   storeId: number;
   storeName: string;
-  region: string;
-  dealerName: string | null;
   createdAt: string;
 }
 
@@ -102,7 +100,7 @@ const LIST_SELECT = {
   customerCode: true,
   storeId: true,
   createdAt: true,
-  store: { select: { name: true, region: true } },
+  store: { select: { name: true } },
 } satisfies Prisma.CustomerSelect;
 
 const DETAIL_SELECT = {
@@ -126,7 +124,7 @@ const DETAIL_SELECT = {
   hasExosomeConsent: true,
   exosomeConsentSignedAt: true,
   storeCredit: true,
-  store: { select: { name: true, region: true } },
+  store: { select: { name: true } },
 } satisfies Prisma.CustomerSelect;
 
 type ListRow = Prisma.CustomerGetPayload<{ select: typeof LIST_SELECT }>;
@@ -148,7 +146,6 @@ export class CustomersService {
   async searchCustomers(
     actor: AuthenticatedUser,
     search?: string,
-    region?: Region,
     storeId?: number,
   ): Promise<CustomerListItem[]> {
     const trimmed = search?.trim();
@@ -156,7 +153,6 @@ export class CustomersService {
     const where: Prisma.CustomerWhereInput = {
       deletedAt: null,
       ...customerVisibilityWhere(actor),
-      ...(region ? { store: { region } } : {}),
       ...(storeId ? { storeId } : {}),
       ...(trimmed
         ? {
@@ -176,21 +172,7 @@ export class CustomersService {
       take: SEARCH_RESULT_LIMIT,
     });
 
-    // Batch-load dealers/general_agents for the regions represented in this result
-    const regions = [...new Set(customers.map((c) => c.store.region))];
-    const dealerUsers = regions.length > 0
-      ? await this.prisma.user.findMany({
-          where: { role: { in: ['dealer', 'general_agent'] }, region: { in: regions }, deletedAt: null },
-          select: { name: true, role: true, region: true },
-          orderBy: { role: 'asc' }, // dealer before general_agent → prefer dealer
-        })
-      : [];
-    const dealerByRegion = new Map<Region, string>();
-    for (const u of dealerUsers) {
-      if (u.region && !dealerByRegion.has(u.region)) dealerByRegion.set(u.region, u.name);
-    }
-
-    return customers.map((c) => toListItem(c, dealerByRegion));
+    return customers.map((c) => toListItem(c));
   }
 
   async getCustomerDetail(actor: AuthenticatedUser, id: number): Promise<CustomerDetail> {
@@ -199,7 +181,7 @@ export class CustomersService {
       select: DETAIL_SELECT,
     });
     // 故意跟「真的不存在」回同一個錯誤碼，不讓沒有權限的人從錯誤訊息分辨出「這個 id 其實有資料，只是你看不到」
-    if (!customer || !canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
+    if (!customer || !canActorAccessCustomer(actor, { storeId: customer.storeId })) {
       throw new AppError('CUSTOMER_NOT_FOUND', `customer ${id} not found or not visible to actor ${actor.id}`, 404);
     }
     return toDetail(customer);
@@ -460,9 +442,9 @@ export class CustomersService {
   async updateCustomer(actor: AuthenticatedUser, id: number, input: UpdateCustomerInput): Promise<CustomerDetail> {
     const existing = await this.prisma.customer.findFirst({
       where: { id, deletedAt: null },
-      select: { id: true, phone: true, nationalId: true, storeId: true, store: { select: { region: true } } },
+      select: { id: true, phone: true, nationalId: true, storeId: true },
     });
-    if (!existing || !canActorAccessCustomer(actor, { storeId: existing.storeId, storeRegion: existing.store.region })) {
+    if (!existing || !canActorAccessCustomer(actor, { storeId: existing.storeId })) {
       throw new AppError('CUSTOMER_NOT_FOUND', `customer ${id} not found or not visible to actor ${actor.id}`, 404);
     }
 
@@ -523,10 +505,10 @@ export class CustomersService {
   async getCustomerWallet(actor: AuthenticatedUser, customerId: number) {
     const customer = await this.prisma.customer.findFirst({
       where: { id: customerId, deletedAt: null },
-      select: { storeId: true, store: { select: { region: true } } },
+      select: { storeId: true, store: true },
     });
     if (!customer) throw new AppError('CUSTOMER_NOT_FOUND', '找不到此顧客', 404);
-    if (!canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
+    if (!canActorAccessCustomer(actor, { storeId: customer.storeId })) {
       throw new AppError('PERMISSION_DENIED', '無權限存取此顧客資料', 403);
     }
     const wallet = await this.prisma.customerWallet.findUnique({ where: { customerId } });
@@ -544,10 +526,10 @@ export class CustomersService {
   ) {
     const customer = await this.prisma.customer.findFirst({
       where: { id: customerId, deletedAt: null },
-      select: { storeId: true, store: { select: { region: true } } },
+      select: { storeId: true, store: true },
     });
     if (!customer) throw new AppError('CUSTOMER_NOT_FOUND', '找不到此顧客', 404);
-    if (!canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
+    if (!canActorAccessCustomer(actor, { storeId: customer.storeId })) {
       throw new AppError('PERMISSION_DENIED', '無權限存取此顧客資料', 403);
     }
     if (!Number.isInteger(input.amount) || input.amount <= 0) {
@@ -595,10 +577,10 @@ export class CustomersService {
   async listCustomerCourses(actor: AuthenticatedUser, customerId: number) {
     const customer = await this.prisma.customer.findFirst({
       where: { id: customerId, deletedAt: null },
-      select: { storeId: true, store: { select: { region: true } } },
+      select: { storeId: true, store: true },
     });
     if (!customer) throw new AppError('CUSTOMER_NOT_FOUND', '找不到此顧客', 404);
-    if (!canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
+    if (!canActorAccessCustomer(actor, { storeId: customer.storeId })) {
       throw new AppError('PERMISSION_DENIED', '無權限存取此顧客資料', 403);
     }
 
@@ -636,11 +618,11 @@ export class CustomersService {
       where: { id: customerId, deletedAt: null },
       select: {
         id: true, storeId: true, hasExosomeConsent: true, nationalId: true, customerCode: true,
-        store: { select: { code: true, region: true } },
+        store: { select: { code: true } },
       },
     });
     if (!customer) throw new AppError('CUSTOMER_NOT_FOUND', '找不到此顧客', 404);
-    if (!canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
+    if (!canActorAccessCustomer(actor, { storeId: customer.storeId })) {
       throw new AppError('PERMISSION_DENIED', '無權限存取此顧客資料', 403);
     }
     if (customer.hasExosomeConsent) {
@@ -689,11 +671,11 @@ export class CustomersService {
         exosomeConsentSignedAt: true,
         exosomeConsentSignatureUrl: true,
         storeId: true,
-        store: { select: { name: true, region: true } },
+        store: { select: { name: true } },
       },
     });
     if (!customer) throw new AppError('CUSTOMER_NOT_FOUND', '找不到此顧客', 404);
-    if (!canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
+    if (!canActorAccessCustomer(actor, { storeId: customer.storeId })) {
       throw new AppError('PERMISSION_DENIED', '無權限存取此顧客資料', 403);
     }
     if (!customer.hasExosomeConsent || !customer.exosomeConsentSignedAt) {
@@ -712,7 +694,7 @@ export class CustomersService {
   }
 }
 
-function toListItem(customer: ListRow, dealerByRegion?: Map<Region, string>): CustomerListItem {
+function toListItem(customer: ListRow): CustomerListItem {
   return {
     id: customer.id,
     name: customer.name,
@@ -721,8 +703,6 @@ function toListItem(customer: ListRow, dealerByRegion?: Map<Region, string>): Cu
     customerCode: customer.customerCode,
     storeId: customer.storeId,
     storeName: customer.store.name,
-    region: customer.store.region,
-    dealerName: dealerByRegion?.get(customer.store.region) ?? null,
     createdAt: customer.createdAt.toISOString(),
   };
 }

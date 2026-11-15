@@ -92,12 +92,9 @@ export class CustomersController {
   search(
     @CurrentUser() actor: AuthenticatedUser,
     @Query('search') search?: string,
-    @Query('region') region?: string,
     @Query('storeId', new ParseIntPipe({ optional: true })) storeId?: number,
   ) {
-    const validRegions = ['A', 'B', 'C'];
-    const typedRegion = region && validRegions.includes(region) ? (region as 'A' | 'B' | 'C') : undefined;
-    return this.customersService.searchCustomers(actor, search, typedRegion, storeId);
+    return this.customersService.searchCustomers(actor, search, storeId);
   }
 
   @Get(':id')

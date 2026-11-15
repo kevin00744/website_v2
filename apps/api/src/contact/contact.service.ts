@@ -232,10 +232,7 @@ export class ContactService {
       ...(isHandled !== undefined ? { isHandled } : {}),
     };
 
-    if (actor.role === 'dealer' || actor.role === 'general_agent') {
-      if (!actor.region) return [];
-      where.region = actor.region;
-    } else if (actor.role === 'manager') {
+    if (actor.role === 'manager') {
       if (!actor.storeId) return [];
       where.storeId = actor.storeId;
     } else if (!isAdminRole(actor.role)) {
@@ -262,9 +259,6 @@ export class ContactService {
     if (!existing) {
       throw new AppError('CONTACT_MESSAGE_NOT_FOUND', `contact message ${id} not found`, 404);
     }
-    if ((actor.role === 'dealer' || actor.role === 'general_agent') && existing.region !== actor.region) {
-      throw new AppError('CONTACT_MESSAGE_NOT_FOUND', `contact message ${id} not visible to actor ${actor.id}`, 404);
-    }
     if (existing.category.kind !== 'experience') {
       throw new AppError('CONTACT_MESSAGE_NOT_FORWARDABLE', 'only experience inquiries can be forwarded to a store', 400);
     }
@@ -272,9 +266,6 @@ export class ContactService {
     const store = await this.prisma.store.findFirst({ where: { id: storeId, deletedAt: null } });
     if (!store) {
       throw new AppError('STORE_NOT_FOUND', 'selected store does not exist', 404);
-    }
-    if ((actor.role === 'dealer' || actor.role === 'general_agent') && store.region !== actor.region) {
-      throw new AppError('STORE_NOT_IN_REGION', "selected store is outside dealer's region", 403);
     }
 
     const updated = await this.prisma.contactMessage.update({
@@ -293,9 +284,6 @@ export class ContactService {
     });
     if (!existing) {
       throw new AppError('CONTACT_MESSAGE_NOT_FOUND', `contact message ${id} not found`, 404);
-    }
-    if ((actor.role === 'dealer' || actor.role === 'general_agent') && existing.region !== actor.region) {
-      throw new AppError('CONTACT_MESSAGE_NOT_FOUND', `contact message ${id} not visible to actor ${actor.id}`, 404);
     }
     if (actor.role === 'manager' && existing.storeId !== actor.storeId) {
       throw new AppError('CONTACT_MESSAGE_NOT_FOUND', `contact message ${id} not visible to actor ${actor.id}`, 404);

@@ -20,7 +20,7 @@ interface AddRecordDto {
 
 @Controller('financial')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles('staff', 'manager', 'dealer', 'general_agent')
+@Roles('staff', 'manager', 'accountant')
 export class FinancialController {
   constructor(
     private readonly financialService: FinancialService,

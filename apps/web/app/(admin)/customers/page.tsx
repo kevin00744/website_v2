@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CustomerDetail, CustomerListItem } from '@website-v2/shared-types';
-import { REGION_LABEL } from '@website-v2/shared-types';
 import { ApiError } from '@/lib/api-client';
 import { getAuthUser, type AuthUser } from '@/lib/auth';
 import { searchCustomers } from '@/lib/customers-api';
@@ -21,16 +20,9 @@ function canCreateCustomer(role: AuthUser['role'] | undefined): boolean {
   return role === 'admin' || role === 'system_admin' || role === 'manager' || role === 'staff';
 }
 
-function canFilterByRegionOrStore(role: AuthUser['role'] | undefined): boolean {
-  return role === 'admin' || role === 'system_admin' || role === 'dealer' || role === 'general_agent';
+function canFilterByStore(role: AuthUser['role'] | undefined): boolean {
+  return role === 'admin' || role === 'system_admin';
 }
-
-const REGION_OPTIONS = [
-  { value: '', label: '全部區域' },
-  { value: 'A', label: REGION_LABEL['A'] },
-  { value: 'B', label: REGION_LABEL['B'] },
-  { value: 'C', label: REGION_LABEL['C'] },
-];
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<CustomerListItem[]>([]);
@@ -42,24 +34,22 @@ export default function CustomersPage() {
   const [stores, setStores] = useState<StoreSummary[]>([]);
 
   // Use refs for filter state to avoid stale closure in CustomerSearchBar callback
-  const filterRef = useRef({ query: '', region: '', storeId: '' });
-  const [filterRegion, setFilterRegion] = useState('');
+  const filterRef = useRef({ query: '', storeId: '' });
   const [filterStoreId, setFilterStoreId] = useState('');
 
   useEffect(() => {
     const authUser = getAuthUser();
     setUser(authUser);
-    if (canFilterByRegionOrStore(authUser?.role)) {
+    if (canFilterByStore(authUser?.role)) {
       listStores().then(setStores).catch(() => setStores([]));
     }
   }, []);
 
-  const doSearch = useCallback(async (query: string, region: string, storeId: string) => {
+  const doSearch = useCallback(async (query: string, _region: string, storeId: string) => {
     setLoading(true);
     setLoadError(undefined);
     try {
       const result = await searchCustomers(query, {
-        region: region || undefined,
         storeId: storeId ? Number(storeId) : undefined,
       });
       setCustomers(result);
@@ -73,7 +63,7 @@ export default function CustomersPage() {
   // Stable onSearch callback for CustomerSearchBar — reads current filters from ref
   const handleSearch = useCallback((query: string) => {
     filterRef.current.query = query;
-    void doSearch(query, filterRef.current.region, filterRef.current.storeId);
+    void doSearch(query, '', filterRef.current.storeId);
   }, [doSearch]);
 
   // Initial load
@@ -81,25 +71,14 @@ export default function CustomersPage() {
     void doSearch('', '', '');
   }, [doSearch]);
 
-  function handleRegionChange(region: string) {
-    const storeId = ''; // clear store when region changes
-    filterRef.current.region = region;
-    filterRef.current.storeId = storeId;
-    setFilterRegion(region);
-    setFilterStoreId(storeId);
-    void doSearch(filterRef.current.query, region, storeId);
-  }
-
   function handleStoreChange(storeId: string) {
     filterRef.current.storeId = storeId;
     setFilterStoreId(storeId);
-    void doSearch(filterRef.current.query, filterRef.current.region, storeId);
+    void doSearch(filterRef.current.query, '', storeId);
   }
 
   function clearFilters() {
-    filterRef.current.region = '';
     filterRef.current.storeId = '';
-    setFilterRegion('');
     setFilterStoreId('');
     void doSearch(filterRef.current.query, '', '');
   }
@@ -107,26 +86,24 @@ export default function CustomersPage() {
   function handleCreated(customer: CustomerDetail) {
     setWizardOpen(false);
     setSelectedCustomerId(customer.id);
-    void doSearch(filterRef.current.query, filterRef.current.region, filterRef.current.storeId);
+    void doSearch(filterRef.current.query, '', filterRef.current.storeId);
   }
 
   function handleUpdated(_customer: CustomerDetail) {
-    void doSearch(filterRef.current.query, filterRef.current.region, filterRef.current.storeId);
+    void doSearch(filterRef.current.query, '', filterRef.current.storeId);
   }
 
   function handleDeleted() {
     setSelectedCustomerId(undefined);
-    void doSearch(filterRef.current.query, filterRef.current.region, filterRef.current.storeId);
+    void doSearch(filterRef.current.query, '', filterRef.current.storeId);
   }
 
-  const showFilters = canFilterByRegionOrStore(user?.role);
+  const showFilters = canFilterByStore(user?.role);
   const storeOptions = [
     { value: '', label: '全部分店' },
-    ...stores
-      .filter((s) => !filterRegion || s.region === filterRegion)
-      .map((s) => ({ value: String(s.id), label: s.name })),
+    ...stores.map((s) => ({ value: String(s.id), label: s.name })),
   ];
-  const hasActiveFilter = filterRegion || filterStoreId;
+  const hasActiveFilter = filterStoreId;
 
   return (
     <div className="flex flex-col gap-6 pb-24 md:pb-0">
@@ -143,14 +120,6 @@ export default function CustomersPage() {
 
       {showFilters && (
         <div className="flex flex-wrap gap-3">
-          <div className="min-w-[140px]">
-            <KioskSelect
-              label="區域"
-              options={REGION_OPTIONS}
-              value={filterRegion}
-              onChange={(e) => handleRegionChange(e.target.value)}
-            />
-          </div>
           <div className="min-w-[180px]">
             <KioskSelect
               label="分店"

@@ -21,14 +21,27 @@
 # 如果容器裡看不到 packages/ 跟根目錄的 package.json，npm install 會直接把它們當成
 # 「要去 npm registry 找的套件」，導致 404（@website-v2/copy 從來沒發布過，本來就找不到）。
 services:
+  nginx:
+    image: nginx:alpine
+    container_name: website_v2_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - ./docker/nginx/ssl:/etc/nginx/ssl
+    networks:
+      - website_v2_network
+    depends_on:
+      - web
+      - api
+
   web:
     container_name: website_v2_web
     image: node:20-slim
     working_dir: /workspace/apps/web
     volumes:
       - .:/workspace
-    ports:
-      - "80:3000"
     environment:
       # 故意不設 NEXT_PUBLIC_API_BASE_URL：瀏覽器端的 apps/web/lib/api-client.ts 的
       # resolveApiBaseUrl() 會在沒有這個環境變數時，自動依「訪客瀏覽器網址列目前的 hostname」

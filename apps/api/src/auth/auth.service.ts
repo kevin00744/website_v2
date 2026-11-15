@@ -20,7 +20,7 @@ export class AuthService {
   async login(username: string, password: string): Promise<LoginResult> {
     const user = await this.prisma.user.findFirst({
       where: { username, deletedAt: null },
-      select: { id: true, username: true, email: true, name: true, role: true, storeId: true, region: true, dealerId: true, password: true, isActive: true },
+      select: { id: true, username: true, email: true, name: true, role: true, storeId: true, password: true, isActive: true },
     });
 
     // 帳號不存在跟密碼錯誤回同一個錯誤碼，不讓門市人員（或攻擊者）從錯誤訊息分辨出帳號是否存在
@@ -42,8 +42,6 @@ export class AuthService {
       name: user.name,
       role: user.role,
       storeId: user.storeId,
-      region: user.region,
-      dealerId: user.dealerId,
       storeFeatures,
     };
 

@@ -79,7 +79,7 @@ export interface RestockRequestSummary {
 const RESTOCK_REQUEST_SELECT = {
   id: true,
   storeId: true,
-  store: { select: { name: true, region: true } },
+  store: { select: { name: true } },
   productId: true,
   product: { select: { name: true } },
   quantity: true,
@@ -227,12 +227,12 @@ export class InventoryService {
   async listByCustomer(actor: AuthenticatedUser, customerId: number): Promise<InventoryLogSummary[]> {
     const customer = await this.prisma.customer.findFirst({
       where: { id: customerId, deletedAt: null },
-      select: { storeId: true, store: { select: { region: true } } },
+      select: { storeId: true },
     });
     if (!customer) {
       throw new AppError('CUSTOMER_NOT_FOUND', `customer ${customerId} not found`, 404);
     }
-    if (!canActorAccessCustomer(actor, { storeId: customer.storeId, storeRegion: customer.store.region })) {
+    if (!canActorAccessCustomer(actor, { storeId: customer.storeId })) {
       throw new AppError('CUSTOMER_NOT_FOUND', `customer ${customerId} not visible to actor ${actor.id}`, 404);
     }
 
@@ -312,7 +312,6 @@ export class InventoryService {
     const where: Prisma.RestockRequestWhereInput = {
       ...(isCompleted !== undefined ? { isCompleted } : {}),
       ...(actor.role === 'manager' && actor.storeId ? { storeId: actor.storeId } : {}),
-      ...(actor.role === 'dealer' || actor.role === 'general_agent') && actor.region ? { store: { region: actor.region } } : {},
     };
 
     const requests = await this.prisma.restockRequest.findMany({
@@ -330,12 +329,12 @@ export class InventoryService {
   async completeRestockRequest(actor: AuthenticatedUser, id: number): Promise<RestockRequestSummary> {
     const existing = await this.prisma.restockRequest.findUnique({
       where: { id },
-      select: { id: true, isCompleted: true, store: { select: { region: true } } },
+      select: { id: true, isCompleted: true, store: true },
     });
     if (!existing) {
       throw new AppError('RESTOCK_REQUEST_NOT_FOUND', `restock request ${id} not found`, 404);
     }
-    if ((actor.role === 'dealer' || actor.role === 'general_agent') && existing.store.region !== actor.region) {
+    if (false) {
       throw new AppError('RESTOCK_REQUEST_NOT_FOUND', `restock request ${id} not visible to actor ${actor.id}`, 404);
     }
     if (existing.isCompleted) {

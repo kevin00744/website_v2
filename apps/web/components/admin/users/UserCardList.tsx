@@ -14,10 +14,7 @@ interface UserCardListProps {
   deletingId?: number;
   readOnly?: boolean;
   showCreator?: boolean;
-  onAssignDealer?: (user: UserSummary) => void;
 }
-
-const REGION_LABEL: Record<string, string> = { A: '北部', B: '中部', C: '南部' };
 
 function canManage(target: UserSummary, currentUserId: number): boolean {
   return target.role !== 'system_admin' || target.id === currentUserId;
@@ -26,7 +23,6 @@ function canManage(target: UserSummary, currentUserId: number): boolean {
 export function UserCardList({
   users,
   currentUserId,
-  currentUserRole,
   onEdit,
   onResetPassword,
   onToggleActive,
@@ -35,10 +31,7 @@ export function UserCardList({
   deletingId,
   readOnly,
   showCreator,
-  onAssignDealer,
 }: UserCardListProps) {
-  const isAdmin = currentUserRole === 'admin' || currentUserRole === 'system_admin';
-
   return (
     <ul className="flex flex-col gap-3 md:hidden">
       {users.map((user) => {
@@ -50,21 +43,8 @@ export function UserCardList({
                 <span className="text-kiosk-lg font-bold text-slate-900">{user.name}</span>
                 <span className="text-kiosk-base text-slate-500 font-mono">{user.username}</span>
                 <span className="text-kiosk-base text-slate-500">
-                  {ROLE_LABEL[user.role]} ·{' '}
-                  {user.storeName ?? (user.region ? REGION_LABEL[user.region] : '—')}
+                  {(ROLE_LABEL as Record<string, string>)[user.role] ?? user.role}
                 </span>
-                {isAdmin && (
-                  onAssignDealer ? (
-                    <button
-                      onClick={() => onAssignDealer(user)}
-                      className="text-left text-sm text-slate-400 underline-offset-2 hover:text-kiosk-primary hover:underline"
-                    >
-                      負責代理：{user.dealerName ?? '未指定'}
-                    </button>
-                  ) : user.dealerName ? (
-                    <span className="text-kiosk-base text-slate-400">負責代理：{user.dealerName}</span>
-                  ) : null
-                )}
                 {showCreator && (
                   <span className="text-kiosk-base text-slate-400">建立者：{user.creatorName ?? '—'}</span>
                 )}
