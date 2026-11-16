@@ -57,9 +57,34 @@ export function updateCustomer(id: number, input: CustomerUpdateInput): Promise<
   return apiRequest<CustomerDetail>(`/customers/${id}`, { method: 'PATCH', json: input });
 }
 
-/** 軟刪除（後端設 deletedAt），只有 admin/system_admin 能呼叫 */
+/**
+ * 軟刪除（後端設 deletedAt）。店長（限自己分店）/管理員/系統管理員可呼叫；
+ * 顧客還有未用完課程或儲值金時只有系統管理員能刪（後端回 CUSTOMER_HAS_REMAINING_VALUE）。
+ */
 export function deleteCustomer(id: number): Promise<void> {
   return apiRequest<void>(`/customers/${id}`, { method: 'DELETE' });
+}
+
+export interface DeletedCustomerItem {
+  id: number;
+  name: string;
+  phone: string | null;
+  customerCode: string | null;
+  storeId: number;
+  storeName: string;
+  deletedAt: string;
+  restoreDeadline: string;
+  deletedBy: { id: number; name: string; username: string } | null;
+}
+
+/** 最近 3 天內刪除、還可以還原的顧客 */
+export function listDeletedCustomers(): Promise<DeletedCustomerItem[]> {
+  return apiRequest<DeletedCustomerItem[]>('/customers/deleted');
+}
+
+/** 還原 3 天內刪除的顧客 */
+export function restoreCustomer(id: number): Promise<CustomerDetail> {
+  return apiRequest<CustomerDetail>(`/customers/${id}/restore`, { method: 'POST' });
 }
 
 export function getDisclaimerTemplate(): Promise<DisclaimerTemplate> {

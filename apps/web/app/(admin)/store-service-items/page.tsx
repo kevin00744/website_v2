@@ -133,7 +133,7 @@ export default function StoreServiceItemsPage() {
   }
 
   if (!storeId) {
-    return <p className="py-16 text-center text-kiosk-base text-slate-500">您的帳號未指定所屬分店。</p>;
+    return <p className="py-16 text-center text-kiosk-base text-slate-500">您的帳號尚未設定所屬門市，請聯絡系統管理員。</p>;
   }
 
   return (
@@ -141,7 +141,7 @@ export default function StoreServiceItemsPage() {
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-kiosk-xl font-bold text-slate-900">服務品項管理</h1>
-          <p className="mt-1 text-sm text-slate-500">管理本分店的服務項目與單次定價，各分店獨立維護，互不影響。</p>
+          <p className="mt-1 text-sm text-slate-500">管理門市的服務項目與單次定價。</p>
         </div>
         {!showForm && (
           <KioskButton variant="primary" onClick={() => setShowForm(true)}>

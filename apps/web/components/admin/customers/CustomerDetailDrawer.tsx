@@ -16,6 +16,7 @@ import {
   type CustomerCourseItem,
 } from '@/lib/customers-api';
 import { openPdfInNewTab } from '@/lib/pdf-viewer';
+import { formatPhone } from '@/lib/format';
 import { KioskButton } from '../kiosk/KioskButton';
 import { KioskInput } from '../kiosk/KioskInput';
 import { MaskedPhoneInput } from '../kiosk/MaskedInput';
@@ -26,6 +27,7 @@ import { NewTreatmentModal } from './NewTreatmentModal';
 import { POSCheckoutModal } from './POSCheckoutModal';
 import { CourseRefundModal } from './CourseRefundModal';
 import { CourseConvertModal } from './CourseConvertModal';
+import { LineBindingBadge } from '../line/LineBindingBadge';
 
 interface CustomerDetailDrawerProps {
   customerId: number;
@@ -40,9 +42,12 @@ function canConsumeInventory(role: AuthUser['role'] | undefined): boolean {
   return role === 'admin' || role === 'system_admin' || role === 'manager' || role === 'staff';
 }
 
-/** 對齊後端 CustomersController 的 DELETE :id 路由覆寫 @Roles('admin')：刪顧客只開放給 admin/system_admin */
+/**
+ * 對齊後端 CustomersController 的 DELETE :id 路由 @Roles('manager')：店長/管理員/系統管理員可刪。
+ * 顧客還有未用完課程或儲值金時，後端會再限制只有系統管理員能刪。
+ */
 function canDeleteCustomer(role: AuthUser['role'] | undefined): boolean {
-  return role === 'admin' || role === 'system_admin';
+  return role === 'manager' || role === 'admin' || role === 'system_admin';
 }
 
 /** 退課轉儲值 / 課程轉換 限 manager 以上 */
@@ -96,7 +101,8 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
       const result = await getCustomerDetail(customerId);
       setDetail(result);
       reset({
-        phone: result.phone ?? '',
+        // DB 存純數字，表單（0000-000-000 格式驗證）帶入時加回 dash
+        phone: formatPhone(result.phone) ?? '',
         address: result.address ?? '',
         line: result.line ?? '',
         email: result.email ?? '',
@@ -125,7 +131,7 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
 
   async function handleDelete() {
     if (!detail) return;
-    if (!window.confirm(`確定要刪除顧客「${detail.name}」嗎？這個動作無法復原。`)) return;
+    if (!window.confirm(`確定要刪除顧客「${detail.name}」嗎？\n\n刪除後 3 天內可以在顧客資料頁的「最近刪除」還原，超過 3 天就無法還原。`)) return;
     setDeleting(true);
     setDeleteError(undefined);
     try {
@@ -192,9 +198,15 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
             課程管理
           </KioskButton>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {canConsumeInventory(user?.role) && (
             <>
+              <a
+                href={`/calendar?customerId=${customerId}`}
+                className="inline-flex min-h-kiosk items-center rounded-kiosk border-2 border-kiosk-primary bg-white px-8 text-kiosk-base font-bold text-kiosk-primary hover:bg-kiosk-primary/5"
+              >
+                📅 預約
+              </a>
               <KioskButton variant="secondary" onClick={() => setPosModalOpen(true)}>
                 ＋ POS 結帳
               </KioskButton>
@@ -219,6 +231,9 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
 
       {tab === 'profile' && (
         <>
+          {/* LINE 綁定狀態：除了會計以外都看得到（對齊後端 LineAdminController） */}
+          {user && user.role !== 'accountant' && <LineBindingBadge customerId={detail.id} />}
+
           {/* 儲值金餘額 */}
           {parseFloat(detail.storeCredit) > 0 && (
             <div className="rounded-kiosk border border-blue-200 bg-blue-50 p-3">

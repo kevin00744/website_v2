@@ -147,7 +147,7 @@ export function NewUserModal({ open, onClose, onSaved, editingUser }: NewUserMod
             label="密碼"
             type="password"
             required
-            placeholder="至少 8 個字元"
+            placeholder="至少 4 個字元（可只用數字）"
             errorMessage={errors.password?.message}
             isValid={Boolean(dirtyFields.password) && !errors.password}
             {...register('password')}

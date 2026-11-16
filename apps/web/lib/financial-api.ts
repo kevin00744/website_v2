@@ -1,5 +1,4 @@
-import { apiRequest, resolveApiBaseUrl } from './api-client';
-import { getAuthToken } from './auth';
+import { apiRequest, apiRequestBlob } from './api-client';
 
 export type FinancialCategory = 'sales' | 'top_up' | 'outsource_payout' | 'daily_expense' | 'petty_cash_replenish';
 export type FinancialRecordType = 'income' | 'expense';
@@ -44,11 +43,8 @@ export function listFinancialRecords(
 
 /** 下載 CSV（繞過 apiRequest，直接用 fetch + Blob 觸發下載） */
 export async function downloadFinancialCsv(storeId: number, from: string, to: string): Promise<void> {
-  const token = getAuthToken();
-  const url = `${resolveApiBaseUrl()}/financial/stores/${storeId}/export-csv?from=${from}&to=${to}`;
-  const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-  if (!res.ok) throw new Error('CSV 匯出失敗');
-  const blob = await res.blob();
+  // 走 apiRequestBlob：token 過期時會自動換新再重試
+  const blob = await apiRequestBlob(`/financial/stores/${storeId}/export-csv?from=${from}&to=${to}`);
   const link = document.createElement('a');
   link.href = URL.createObjectURL(blob);
   link.download = `financial_${storeId}_${from}_${to}.csv`;

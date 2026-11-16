@@ -81,7 +81,7 @@ export default function FinancialPage() {
   const totalExpense = records?.filter((r) => r.type === 'expense').reduce((s, r) => s + r.amount, 0) ?? 0;
 
   if (!storeId) {
-    return <p className="py-16 text-center text-kiosk-base text-slate-500">您的帳號未指定所屬分店。</p>;
+    return <p className="py-16 text-center text-kiosk-base text-slate-500">您的帳號尚未設定所屬門市，請聯絡系統管理員。</p>;
   }
 
   return (

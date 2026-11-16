@@ -58,7 +58,7 @@ interface UpdateUserInput {
 /** system_admin 帳號不可被任何人管理（除了自己改密碼） */
 const PROTECTED_ROLE: Role = 'system_admin';
 
-const MIN_PASSWORD_LENGTH = 8;
+const MIN_PASSWORD_LENGTH = 4;
 
 /**
  * 角色建立矩陣：
@@ -103,7 +103,7 @@ export class UsersService {
     if (!name) throw new AppError('USER_NAME_REQUIRED', 'name is required');
     const email = input.email?.trim() || null;
     if (!input.password || input.password.length < MIN_PASSWORD_LENGTH) {
-      throw new AppError('USER_PASSWORD_TOO_SHORT', 'password must be at least 8 characters');
+      throw new AppError('USER_PASSWORD_TOO_SHORT', 'password must be at least 4 characters');
     }
 
     const existingUsername = await this.prisma.user.findFirst({ where: { username, deletedAt: null } });
@@ -201,7 +201,7 @@ export class UsersService {
     let passwordHash: string | undefined;
     if (input.password !== undefined) {
       if (input.password.length < MIN_PASSWORD_LENGTH) {
-        throw new AppError('USER_PASSWORD_TOO_SHORT', 'password must be at least 8 characters');
+        throw new AppError('USER_PASSWORD_TOO_SHORT', 'password must be at least 4 characters');
       }
       passwordHash = await bcrypt.hash(input.password, 10);
     }
@@ -227,7 +227,7 @@ export class UsersService {
       throw new AppError('PERMISSION_DENIED', 'system_admin account can only be managed by itself', 403);
     }
     if (!newPassword || newPassword.length < MIN_PASSWORD_LENGTH) {
-      throw new AppError('USER_PASSWORD_TOO_SHORT', 'password must be at least 8 characters');
+      throw new AppError('USER_PASSWORD_TOO_SHORT', 'password must be at least 4 characters');
     }
     const passwordHash = await bcrypt.hash(newPassword, 10);
     await this.prisma.user.update({ where: { id }, data: { password: passwordHash } });

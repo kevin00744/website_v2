@@ -459,7 +459,7 @@ export function POSCheckoutModal({
               !serviceItems ? (
                 <p className="text-kiosk-base text-slate-400">載入服務項目中…</p>
               ) : serviceItems.length === 0 ? (
-                <p className="text-kiosk-base text-slate-400">此分店尚無服務項目。</p>
+                <p className="text-kiosk-base text-slate-400">目前尚無服務項目。</p>
               ) : (
                 <KioskSelect
                   label="服務項目"
@@ -490,7 +490,7 @@ export function POSCheckoutModal({
                 <p className="text-kiosk-base text-slate-400">載入促銷方案中…</p>
               ) : promotionPlans.length === 0 ? (
                 <p className="rounded-kiosk bg-slate-50 p-4 text-kiosk-base text-slate-500">
-                  此分店尚無促銷方案，請先至「促銷方案管理」建立。
+                  目前尚無促銷方案，請先至「促銷方案管理」建立。
                 </p>
               ) : (
                 <div className="flex flex-col gap-2">

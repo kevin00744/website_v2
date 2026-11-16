@@ -5,7 +5,8 @@ import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
 async function bootstrap() {
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // rawBody：LINE webhook 驗簽需要原始 request body（req.rawBody）
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { rawBody: true });
   app.setGlobalPrefix('api/v2');
   app.useGlobalFilters(new HttpExceptionFilter());
   app.enableCors();

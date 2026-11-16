@@ -35,7 +35,7 @@ export const userUsernameSchema = z
 
 export const userNameSchema = z.string().trim().min(1, '姓名不能空白').max(50, '姓名好像太長了，請確認一下');
 export const userEmailSchema = z.string().trim().email('Email 格式不太對，請再檢查一次').optional().or(z.literal(''));
-export const userPasswordSchema = z.string().min(8, '密碼至少要 8 個字元');
+export const userPasswordSchema = z.string().min(4, '密碼至少要 4 個字元');
 
 const roleEnum = z.enum(['admin', 'manager', 'accountant', 'staff'], {
   errorMap: () => ({ message: '請選擇角色' }),
@@ -83,7 +83,7 @@ export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 
 export const updateSelfSchema = z.object({
   username: userUsernameSchema.optional(),
-  password: z.string().min(8, '密碼至少 8 個字元').optional(),
+  password: z.string().min(4, '密碼至少 4 個字元').optional(),
   phone: z.string().trim().optional(),
   name: z.string().trim().min(1, '姓名不能為空').optional(),
   email: z.string().trim().email('Email 格式不正確').optional(),

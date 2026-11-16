@@ -53,6 +53,8 @@ services:
       # web 這個容器「裡面」執行的，localhost:3101 在容器內部解析不到 api 容器，要用
       # docker compose 的服務名稱 api（內部網路）+ 容器內實際監聽的 port 3000。
       - CMS_API_INTERNAL_URL=http://api:3000/api/v2
+      # LINE LIFF（顧客端 /liff/* 頁面）；NEXT_PUBLIC_ 變數在 next build 時寫入，改值後要重新 build
+      - NEXT_PUBLIC_LIFF_ID=${LINE_LIFF_ID:-}
     networks:
       - website_v2_network
     depends_on:
@@ -72,6 +74,13 @@ services:
       - PORT=3000
       # 正式環境部署時務必覆寫成隨機長字串，這裡的 fallback（見 src/auth/jwt-secret.const.ts）只給本機開發用
       - JWT_SECRET=${JWT_SECRET:-dev-only-insecure-secret-change-in-production}
+      # LINE 整合（測試期，LINE_ENABLED=true 才會啟用；只有 system_admin 看得到後台相關畫面）
+      - LINE_ENABLED=${LINE_ENABLED:-false}
+      - LINE_STORE_ID=${LINE_STORE_ID:-}
+      - LINE_CHANNEL_SECRET=${LINE_CHANNEL_SECRET:-}
+      - LINE_CHANNEL_ACCESS_TOKEN=${LINE_CHANNEL_ACCESS_TOKEN:-}
+      - LINE_LOGIN_CHANNEL_ID=${LINE_LOGIN_CHANNEL_ID:-}
+      - LINE_LIFF_ID=${LINE_LIFF_ID:-}
     networks:
       - website_v2_network
     depends_on:

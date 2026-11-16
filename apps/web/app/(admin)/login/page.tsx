@@ -6,7 +6,8 @@ import { useForm } from 'react-hook-form';
 import { loginSchema, type LoginInput } from '@website-v2/shared-types';
 import { ApiError } from '@/lib/api-client';
 import { login } from '@/lib/auth-api';
-import { saveAuth } from '@/lib/auth';
+import { saveSession } from '@/lib/auth';
+import { updateSavedAccountToken } from '@/lib/multi-account';
 import { KioskButton } from '@/components/admin/kiosk/KioskButton';
 import { KioskInput } from '@/components/admin/kiosk/KioskInput';
 
@@ -29,8 +30,11 @@ export default function LoginPage() {
     setSubmitting(true);
     setSubmitError(undefined);
     try {
-      const result = await login(values.username, values.password);
-      saveAuth(result.accessToken, result.user, rememberDevice ? 30 : 1);
+      // 勾「記住這台裝置」：後端多給 refresh token，裝置不會因 token 到期或系統更新而被登出
+      const result = await login(values.username, values.password, rememberDevice);
+      saveSession(result);
+      // 這個帳號若已設定 PIN 快速切換，順便更新它保存的 token
+      updateSavedAccountToken(result.user.id, result.accessToken, result.user, result.refreshToken);
       window.location.href = '/admin';
     } catch (error) {
       setSubmitError(error instanceof ApiError ? error.message : '登入失敗，請稍後再試');

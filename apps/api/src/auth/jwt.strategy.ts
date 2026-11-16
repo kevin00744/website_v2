@@ -8,6 +8,8 @@ import type { AuthenticatedUser } from './types';
 
 interface JwtPayload {
   sub: number;
+  /** 'refresh' = refresh token，只能用來換新 access token，不能直接呼叫 API */
+  typ?: string;
 }
 
 /**
@@ -26,6 +28,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload): Promise<AuthenticatedUser> {
+    if (payload.typ) {
+      throw new AppError('AUTH_SESSION_EXPIRED', 'refresh token cannot be used as access token', 401);
+    }
     const user = await this.prisma.user.findFirst({
       where: { id: payload.sub, deletedAt: null, isActive: true },
       select: { id: true, username: true, email: true, name: true, role: true, storeId: true },

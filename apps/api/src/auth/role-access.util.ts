@@ -8,6 +8,11 @@ export function isAdminRole(role: Role): boolean {
   return ADMIN_ROLES.includes(role);
 }
 
+/** 僅 system_admin（不含 admin）。測試中的功能（例如 LINE 整合）用這個判斷 */
+export function isSystemAdmin(actor: Pick<AuthenticatedUser, 'role'>): boolean {
+  return actor.role === 'system_admin';
+}
+
 /**
  * 顧客存取權限判斷：
  * - system_admin / admin：全部

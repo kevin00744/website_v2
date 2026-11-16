@@ -15,6 +15,7 @@ import {
 } from './disclaimer-pdf.util';
 import { decodeBase64Png } from './document-pdf.util';
 import { loadCustomerFile, saveCustomerFile } from './customer-file-storage.util';
+import { formatPhoneDisplay } from '../common/phone.util';
 
 const VISIBILITY_SELECT = { storeId: true } as const;
 
@@ -95,7 +96,7 @@ export class CustomerDisclaimerService {
       customerName: customer.name,
       customerCode: effectiveCustomerCode,
       nationalId: customer.nationalId ?? '（未填）',
-      phone: customer.phone ?? '（未填）',
+      phone: formatPhoneDisplay(customer.phone) ?? '（未填）',
       address: customer.address ?? '',
       storeName: customer.store.name,
       storeCode: customer.store.code,

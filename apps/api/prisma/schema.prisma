@@ -83,45 +83,48 @@ model User {
   deletedAt DateTime? @map("deleted_at")
 
   createdCustomers               Customer[]  @relation("CreatedBy")
+  deletedCustomers               Customer[]  @relation("CustomerDeletedBy")
   disclaimerStaffSignedCustomers Customer[]  @relation("DisclaimerStaff")
   documentStaffSignedCustomers   Customer[]  @relation("DocumentStaff")
   signatures                     Signature[]
 
-  inventoryLogs              InventoryLog[]
-  restockRequestsRequested   RestockRequest[]         @relation("RestockRequestedBy")
-  restockRequestsCompleted   RestockRequest[]         @relation("RestockCompletedBy")
-  forwardedContactMessages   ContactMessage[]         @relation("ContactMessageForwardedBy")
-  createdConversations       Conversation[]           @relation("ConversationCreator")
+  inventoryLogs            InventoryLog[]
+  restockRequestsRequested RestockRequest[]          @relation("RestockRequestedBy")
+  restockRequestsCompleted RestockRequest[]          @relation("RestockCompletedBy")
+  forwardedContactMessages ContactMessage[]          @relation("ContactMessageForwardedBy")
+  createdConversations     Conversation[]            @relation("ConversationCreator")
   resolvedConversations    Conversation[]            @relation("ConversationResolver")
   conversationParticipants ConversationParticipant[]
   messages                 Message[]
 
-  chatContactPermissionsOwned     ChatContactPermission[] @relation("ChatContactPermissionOwner")
-  chatContactPermissionsAsContact ChatContactPermission[] @relation("ChatContactPermissionContact")
-  chatContactPermissionsCreated   ChatContactPermission[] @relation("ChatContactPermissionCreator")
+  chatContactPermissionsOwned     ChatContactPermission[]   @relation("ChatContactPermissionOwner")
+  chatContactPermissionsAsContact ChatContactPermission[]   @relation("ChatContactPermissionContact")
+  chatContactPermissionsCreated   ChatContactPermission[]   @relation("ChatContactPermissionCreator")
   treatmentRecordsPerformed       CustomerTreatmentRecord[] @relation("TreatmentPerformedBy")
   attendanceLogs                  AttendanceLog[]
-  walletLogsPerformed             WalletLog[]             @relation("WalletLogPerformedBy")
-  financialRecordsPerformed       FinancialRecord[]       @relation("FinancialRecordPerformedBy")
-  serviceRecordsAsStaff           ServiceRecord[]         @relation("ServiceRecordStaff")
-  serviceRecordsRolledBack        ServiceRecord[]         @relation("ServiceRecordRollback")
+  walletLogsPerformed             WalletLog[]               @relation("WalletLogPerformedBy")
+  financialRecordsPerformed       FinancialRecord[]         @relation("FinancialRecordPerformedBy")
+  serviceRecordsAsStaff           ServiceRecord[]           @relation("ServiceRecordStaff")
+  serviceRecordsRolledBack        ServiceRecord[]           @relation("ServiceRecordRollback")
   exosomeConsentLogsOperated      ExosomeConsentLog[]
   courseRefundLogsOperated        CourseRefundToCreditLog[]
   courseConversionLogsOperated    CourseConversionLog[]
-  pettyCashLogsPerformed          PettyCashLog[]          @relation("PettyCashLogPerformedBy")
+  pettyCashLogsPerformed          PettyCashLog[]            @relation("PettyCashLogPerformedBy")
+  appointmentsAssigned            Appointment[]             @relation("AppointmentStaff")
+  appointmentsCreated             Appointment[]             @relation("AppointmentCreatedBy")
 
   @@map("users")
 }
 
 model Store {
-  id             Int       @id @default(autoincrement())
-  code           String    @unique
-  name           String
-  phone          String?
-  address        String?
-  note           String?
+  id               Int       @id @default(autoincrement())
+  code             String    @unique
+  name             String
+  phone            String?
+  address          String?
+  note             String?
   isActive         Boolean   @default(true) @map("is_active")
-  pettyCashBalance Int       @default(0)    @map("petty_cash_balance")
+  pettyCashBalance Int       @default(0) @map("petty_cash_balance")
   features         Json      @default("{}") @map("features")
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
@@ -143,25 +146,26 @@ model Store {
   financialRecords FinancialRecord[]
   serviceRecords   ServiceRecord[]
   pettyCashLogs    PettyCashLog[]
+  appointments     Appointment[]
 
   @@map("stores")
 }
 
 model Customer {
-  id           Int     @id @default(autoincrement())
-  name         String
-  phone        String?
-  line         String?
-  email        String?
-  address      String?
-  note         String?
-  nationalId   String? @map("national_id")
-  customerCode String? @unique @map("customer_code")
+  id                         Int       @id @default(autoincrement())
+  name                       String
+  phone                      String?
+  line                       String?
+  email                      String?
+  address                    String?
+  note                       String?
+  nationalId                 String?   @map("national_id")
+  customerCode               String?   @unique @map("customer_code")
   isExosomeUser              Boolean   @default(false) @map("is_exosome_user")
   exosomeConsentSignatureUrl String?   @map("exosome_consent_signature_url")
   hasExosomeConsent          Boolean   @default(false) @map("has_exosome_consent")
   exosomeConsentSignedAt     DateTime? @map("exosome_consent_signed_at")
-  storeCredit                Decimal   @default(0) @db.Decimal(12, 2) @map("store_credit")
+  storeCredit                Decimal   @default(0) @map("store_credit") @db.Decimal(12, 2)
 
   storeId   Int   @map("store_id")
   store     Store @relation(fields: [storeId], references: [id])
@@ -186,21 +190,26 @@ model Customer {
   disclaimerStaffId          Int?      @map("disclaimer_staff_id")
   disclaimerStaff            User?     @relation("DisclaimerStaff", fields: [disclaimerStaffId], references: [id])
 
-  createdAt DateTime  @default(now()) @map("created_at")
-  updatedAt DateTime  @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  deletedAt   DateTime? @map("deleted_at")
+  /// 誰刪除的（軟刪除後 3 天內可還原，還原時清空）
+  deletedById Int?      @map("deleted_by_id")
+  deletedBy   User?     @relation("CustomerDeletedBy", fields: [deletedById], references: [id])
 
   signatures Signature[]
 
-  inventoryLogs           InventoryLog[]
-  treatmentRecords        CustomerTreatmentRecord[]
-  wallet                  CustomerWallet?
-  walletLogs              WalletLog[]
-  customerCourses         CustomerCourse[]
-  serviceRecords          ServiceRecord[]
-  exosomeConsentLogs      ExosomeConsentLog[]
-  courseRefundLogs        CourseRefundToCreditLog[]
-  courseConversionLogs    CourseConversionLog[]
+  inventoryLogs        InventoryLog[]
+  treatmentRecords     CustomerTreatmentRecord[]
+  wallet               CustomerWallet?
+  walletLogs           WalletLog[]
+  customerCourses      CustomerCourse[]
+  serviceRecords       ServiceRecord[]
+  exosomeConsentLogs   ExosomeConsentLog[]
+  courseRefundLogs     CourseRefundToCreditLog[]
+  courseConversionLogs CourseConversionLog[]
+  appointments         Appointment[]
+  lineAccount          LineAccount?
 
   @@index([name])
   @@index([phone])
@@ -378,10 +387,10 @@ enum PaymentMethod {
 }
 
 enum PettyCashActionType {
-  add              // 補充備用金（店長/admin 手動補充）
-  remove           // 移除備用金（店長/admin 手動移除）
+  add // 補充備用金（店長/admin 手動補充）
+  remove // 移除備用金（店長/admin 手動移除）
   outsource_deduct // 外包支出扣款（自動由 outsource_payout 觸發）
-  expense_deduct   // 日常支出現金付款扣款（自動由 daily_expense+cash 觸發）
+  expense_deduct // 日常支出現金付款扣款（自動由 daily_expense+cash 觸發）
 }
 
 enum FinancialRecordType {
@@ -391,27 +400,27 @@ enum FinancialRecordType {
 
 /// 帳務分類：與 FinancialRecord.category 搭配，決定如何聯動 Store.pettyCashBalance
 enum FinancialCategory {
-  sales                 // 單次/課程營業收入
-  top_up                // 儲值收入
-  outsource_payout      // 外包人員現金日結支出（應用層從 pettyCashBalance 扣）
-  daily_expense         // 日常雜支
-  petty_cash_replenish  // 備用金補充（限店長/admin，應用層加到 pettyCashBalance）
+  sales // 單次/課程營業收入
+  top_up // 儲值收入
+  outsource_payout // 外包人員現金日結支出（應用層從 pettyCashBalance 扣）
+  daily_expense // 日常雜支
+  petty_cash_replenish // 備用金補充（限店長/admin，應用層加到 pettyCashBalance）
 }
 
 enum ConsumptionType {
-  single_purchase   // 單次消費，現場付款
-  wallet_deduction  // 扣儲值金
-  course_deduction  // 扣課程堂數
+  single_purchase // 單次消費，現場付款
+  wallet_deduction // 扣儲值金
+  course_deduction // 扣課程堂數
 }
 
 enum PromotionPlanType {
-  top_up_bonus   // 儲值優惠（儲 X 送 Y）
-  course_bundle  // 課程套組（N 堂）
+  top_up_bonus // 儲值優惠（儲 X 送 Y）
+  course_bundle // 課程套組（N 堂）
 }
 
 enum WalletMovementType {
-  top_up     // 儲值（增加餘額）
-  deduction  // 扣款（消費/退費）
+  top_up // 儲值（增加餘額）
+  deduction // 扣款（消費/退費）
 }
 
 /// 「聯絡我們」表單的詢問類別，後台可以新增/編輯/上下架——kind 決定這個類別建立的訊息要怎麼分派
@@ -434,13 +443,13 @@ model InquiryCategory {
 /// 北/中/南分區，跟 Store.region／User.region 是同一套三分區，分派經銷商時才能直接比對——
 /// city 本身只是給後台顯示「訪客實際填的縣市」，分派邏輯一律看 region。
 model ContactMessage {
-  id       Int     @id @default(autoincrement())
-  name     String
-  phone    String?
-  email    String?
-  city     String
-  region   Region
-  message  String?
+  id      Int     @id @default(autoincrement())
+  name    String
+  phone   String?
+  email   String?
+  city    String
+  region  Region
+  message String?
 
   categoryId Int
   category   InquiryCategory @relation(fields: [categoryId], references: [id])
@@ -577,7 +586,7 @@ model Page {
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
-  articles        Article[]
+  articles Article[]
 
   @@map("pages")
 }
@@ -603,20 +612,20 @@ model PageTemplate {
 /// 解析出來顯示），publishedAt 跟 isPublished 分開存：之後若要支援「排定發布時間」可以直接用
 /// publishedAt 排序/篩選，不用額外加欄位。
 model Article {
-  id          Int       @id @default(autoincrement())
-  slug        String    @unique
-  title       String
-  excerpt     String?
-  coverImageUrl String? @map("cover_image_url")
-  content     Json
-  isPublished Boolean   @default(false) @map("is_published")
-  publishedAt DateTime? @map("published_at")
+  id             Int       @id @default(autoincrement())
+  slug           String    @unique
+  title          String
+  excerpt        String?
+  coverImageUrl  String?   @map("cover_image_url")
+  content        Json
+  isPublished    Boolean   @default(false) @map("is_published")
+  publishedAt    DateTime? @map("published_at")
   /// 文章「要放在哪一個」頁面底下（例如美容原液頁面的相關文章），選填——刪掉那個頁面時只把
   /// 這個欄位清空（SetNull），不會把文章也一起刪掉，文章本身是獨立存在的內容單位。
-  categoryPageId Int?     @map("category_page_id")
-  categoryPage   Page?    @relation(fields: [categoryPageId], references: [id], onDelete: SetNull)
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
+  categoryPageId Int?      @map("category_page_id")
+  categoryPage   Page?     @relation(fields: [categoryPageId], references: [id], onDelete: SetNull)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
 
   @@map("articles")
 }
@@ -624,12 +633,12 @@ model Article {
 /// 顧客商品使用紀錄：記錄每次服務選用了哪個商品，與庫存系統無關（不扣庫存），
 /// 僅做為服務歷程追蹤。照片以 JSON 陣列存相對路徑（同 document/disclaimer PDF 的 storage 慣例）。
 model CustomerTreatmentRecord {
-  id          Int      @id @default(autoincrement())
-  customerId  Int      @map("customer_id")
-  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  id         Int      @id @default(autoincrement())
+  customerId Int      @map("customer_id")
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
-  productId   Int     @map("product_id")
-  product     Product @relation(fields: [productId], references: [id])
+  productId Int     @map("product_id")
+  product   Product @relation(fields: [productId], references: [id])
 
   performedById Int  @map("performed_by_id")
   performedBy   User @relation("TreatmentPerformedBy", fields: [performedById], references: [id])
@@ -638,9 +647,9 @@ model CustomerTreatmentRecord {
   note        String?
 
   /// 照片相對路徑陣列，e.g. ["/api/v2/cms/uploads/abc.jpg"]，前端可直接用 <img src=...>
-  photos      Json     @default("[]")
+  photos Json @default("[]")
 
-  createdAt   DateTime @default(now()) @map("created_at")
+  createdAt DateTime @default(now()) @map("created_at")
 
   @@index([customerId])
   @@map("customer_treatment_records")
@@ -683,6 +692,8 @@ model ServiceItem {
   promotionPlanItems PromotionPlanItem[]
   customerCourses    CustomerCourse[]
   serviceRecords     ServiceRecord[]
+  appointments       Appointment[]
+  lineBookingItem    LineBookingItem?
 
   @@index([storeId])
   @@map("service_items")
@@ -698,10 +709,10 @@ model PromotionPlan {
   name        String
   type        PromotionPlanType
   price       Int
-  bonusAmount Int?              @map("bonus_amount")   // top_up_bonus 時有效
-  isActive    Boolean           @default(true)          @map("is_active")
-  createdAt   DateTime          @default(now())         @map("created_at")
-  updatedAt   DateTime          @updatedAt              @map("updated_at")
+  bonusAmount Int?              @map("bonus_amount") // top_up_bonus 時有效
+  isActive    Boolean           @default(true) @map("is_active")
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
   deletedAt   DateTime?         @map("deleted_at")
 
   items PromotionPlanItem[]
@@ -713,12 +724,12 @@ model PromotionPlan {
 /// 方案明細（一對多）：一個 PromotionPlan 可包含多個課程品項，
 /// 每筆記錄代表「此方案包含 serviceItem X 共 sessions 堂」。
 model PromotionPlanItem {
-  id            Int          @id @default(autoincrement())
-  planId        Int          @map("plan_id")
+  id            Int           @id @default(autoincrement())
+  planId        Int           @map("plan_id")
   plan          PromotionPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
-  serviceItemId Int          @map("service_item_id")
-  serviceItem   ServiceItem  @relation(fields: [serviceItemId], references: [id])
-  sessions      Int          // 此品項在方案內包含的堂數
+  serviceItemId Int           @map("service_item_id")
+  serviceItem   ServiceItem   @relation(fields: [serviceItemId], references: [id])
+  sessions      Int // 此品項在方案內包含的堂數
 
   @@index([planId])
   @@map("promotion_plan_items")
@@ -772,9 +783,9 @@ model CustomerCourse {
   createdAt     DateTime    @default(now()) @map("created_at")
   updatedAt     DateTime    @updatedAt @map("updated_at")
 
-  refundLogs               CourseRefundToCreditLog[]
-  conversionLogsAsSource   CourseConversionLog[]     @relation("ConversionFromCourse")
-  conversionLogsAsTarget   CourseConversionLog[]     @relation("ConversionToCourse")
+  refundLogs             CourseRefundToCreditLog[]
+  conversionLogsAsSource CourseConversionLog[]     @relation("ConversionFromCourse")
+  conversionLogsAsTarget CourseConversionLog[]     @relation("ConversionToCourse")
 
   @@index([customerId])
   @@map("customer_courses")
@@ -874,18 +885,18 @@ model ExosomeConsentLog {
 
 /// 退課程轉儲值金歷程
 model CourseRefundToCreditLog {
-  id                Int            @id @default(autoincrement())
-  customerId        Int            @map("customer_id")
-  customer          Customer       @relation(fields: [customerId], references: [id])
-  customerCourseId  Int            @map("customer_course_id")
-  customerCourse    CustomerCourse @relation(fields: [customerCourseId], references: [id])
-  refundedSessions  Int            @map("refunded_sessions")
-  calculatedAmount  Decimal        @db.Decimal(12, 2) @map("calculated_amount")
-  finalAmount       Decimal        @db.Decimal(12, 2) @map("final_amount")
-  operatorId        Int            @map("operator_id")
-  operator          User           @relation(fields: [operatorId], references: [id])
-  remark            String?
-  createdAt         DateTime       @default(now()) @map("created_at")
+  id               Int            @id @default(autoincrement())
+  customerId       Int            @map("customer_id")
+  customer         Customer       @relation(fields: [customerId], references: [id])
+  customerCourseId Int            @map("customer_course_id")
+  customerCourse   CustomerCourse @relation(fields: [customerCourseId], references: [id])
+  refundedSessions Int            @map("refunded_sessions")
+  calculatedAmount Decimal        @map("calculated_amount") @db.Decimal(12, 2)
+  finalAmount      Decimal        @map("final_amount") @db.Decimal(12, 2)
+  operatorId       Int            @map("operator_id")
+  operator         User           @relation(fields: [operatorId], references: [id])
+  remark           String?
+  createdAt        DateTime       @default(now()) @map("created_at")
 
   @@index([customerId])
   @@map("course_refund_to_credit_logs")
@@ -893,19 +904,102 @@ model CourseRefundToCreditLog {
 
 /// 課程轉換歷程（舊課程 → 新課程）
 model CourseConversionLog {
-  id                 Int            @id @default(autoincrement())
-  customerId         Int            @map("customer_id")
-  customer           Customer       @relation(fields: [customerId], references: [id])
-  fromCourseId       Int            @map("from_course_id")
-  fromCourse         CustomerCourse @relation("ConversionFromCourse", fields: [fromCourseId], references: [id])
-  toCourseId         Int            @map("to_course_id")
-  toCourse           CustomerCourse @relation("ConversionToCourse", fields: [toCourseId], references: [id])
-  convertedSessions  Int            @map("converted_sessions")
-  operatorId         Int            @map("operator_id")
-  operator           User           @relation(fields: [operatorId], references: [id])
-  remark             String?
-  createdAt          DateTime       @default(now()) @map("created_at")
+  id                Int            @id @default(autoincrement())
+  customerId        Int            @map("customer_id")
+  customer          Customer       @relation(fields: [customerId], references: [id])
+  fromCourseId      Int            @map("from_course_id")
+  fromCourse        CustomerCourse @relation("ConversionFromCourse", fields: [fromCourseId], references: [id])
+  toCourseId        Int            @map("to_course_id")
+  toCourse          CustomerCourse @relation("ConversionToCourse", fields: [toCourseId], references: [id])
+  convertedSessions Int            @map("converted_sessions")
+  operatorId        Int            @map("operator_id")
+  operator          User           @relation(fields: [operatorId], references: [id])
+  remark            String?
+  createdAt         DateTime       @default(now()) @map("created_at")
 
   @@index([customerId])
   @@map("course_conversion_logs")
+}
+
+enum AppointmentSource {
+  staff
+  line
+}
+
+enum AppointmentStatus {
+  booked
+  confirmed
+  arrived
+  completed
+  cancelled
+  no_show
+}
+
+/// 行事曆預約。customerId 可為空（尚未建檔的新客），
+/// customerName / customerPhone 一律存快照，顧客資料日後異動也不影響當時的預約紀錄。
+model Appointment {
+  id            Int               @id @default(autoincrement())
+  storeId       Int               @map("store_id")
+  store         Store             @relation(fields: [storeId], references: [id])
+  customerId    Int?              @map("customer_id")
+  customer      Customer?         @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  customerName  String            @map("customer_name")
+  customerPhone String?           @map("customer_phone")
+  serviceItemId Int?              @map("service_item_id")
+  serviceItem   ServiceItem?      @relation(fields: [serviceItemId], references: [id], onDelete: SetNull)
+  staffId       Int?              @map("staff_id")
+  staff         User?             @relation("AppointmentStaff", fields: [staffId], references: [id], onDelete: SetNull)
+  startAt       DateTime          @map("start_at")
+  endAt         DateTime          @map("end_at")
+  status        AppointmentStatus @default(booked)
+  /// 預約來源：staff=後台建立；line=顧客從 LINE LIFF 送出的申請（測試期僅 system_admin 可見）
+  source        AppointmentSource @default(staff)
+  note          String?
+  createdById   Int               @map("created_by_id")
+  createdBy     User              @relation("AppointmentCreatedBy", fields: [createdById], references: [id])
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+  deletedAt     DateTime?         @map("deleted_at")
+
+  @@index([storeId, startAt])
+  @@index([customerId])
+  @@index([staffId, startAt])
+  @@map("appointments")
+}
+
+/// LINE 帳號 ↔ 顧客綁定（一對一）。解除綁定直接刪除此筆。
+/// lineUserId 來自 LINE Login / Messaging API（同一 Provider 下一致）。
+model LineAccount {
+  id          Int      @id @default(autoincrement())
+  lineUserId  String   @unique @map("line_user_id")
+  customerId  Int      @unique @map("customer_id")
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  displayName String   @map("display_name")
+  pictureUrl  String?  @map("picture_url")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("line_accounts")
+}
+
+/// 開放 LINE 預約的服務項目（在後台「LINE」頁勾選）。不在此表的項目，顧客在 LINE 上看不到。
+model LineBookingItem {
+  id            Int         @id @default(autoincrement())
+  serviceItemId Int         @unique @map("service_item_id")
+  serviceItem   ServiceItem @relation(fields: [serviceItemId], references: [id], onDelete: Cascade)
+  durationMin   Int         @default(60) @map("duration_min")
+  sortOrder     Int         @default(0) @map("sort_order")
+
+  @@map("line_booking_items")
+}
+
+/// LINE 預約的時段設定（每店一筆）。
+model LineSetting {
+  id                 Int    @id @default(autoincrement())
+  storeId            Int    @unique @map("store_id")
+  defaultDurationMin Int    @default(60) @map("default_duration_min")
+  firstSlot          String @default("10:00") @map("first_slot")
+  lastSlot           String @default("19:30") @map("last_slot")
+  slotIntervalMin    Int    @default(30) @map("slot_interval_min")
+
+  @@map("line_settings")
 }

@@ -2,9 +2,16 @@
 
 import { useEffect, useState } from 'react';
 import { ROLE_LABEL } from '@website-v2/shared-types';
-import { getAuthUser, saveAuth, clearAuth, type AuthUser } from '@/lib/auth';
-import { getSavedAccounts, validatePin, saveAccount, type SavedAccount } from '@/lib/multi-account';
-import { login } from '@/lib/auth-api';
+import { getAuthUser, saveSession, clearAuth, type AuthUser } from '@/lib/auth';
+import {
+  getSavedAccounts,
+  validatePin,
+  saveAccount,
+  removeSavedAccount,
+  updateSavedAccountToken,
+  type SavedAccount,
+} from '@/lib/multi-account';
+import { exchangeRefreshToken, login } from '@/lib/auth-api';
 import { ApiError } from '@/lib/api-client';
 import { CenteredModal } from '@/components/admin/kiosk/CenteredModal';
 import { PinPad } from '@/components/admin/kiosk/PinPad';
@@ -24,6 +31,7 @@ export function AccountSwitcher({ open, onClose }: AccountSwitcherProps) {
   const [view, setView] = useState<View>('list');
   const [pinTarget, setPinTarget] = useState<SavedAccount | null>(null);
   const [pinError, setPinError] = useState<string>();
+  const [pinBusy, setPinBusy] = useState(false);
 
   // 新帳號登入
   const [loginUsername, setLoginUsername] = useState('');
@@ -39,6 +47,7 @@ export function AccountSwitcher({ open, onClose }: AccountSwitcherProps) {
     setView('list');
     setPinTarget(null);
     setPinError(undefined);
+    setPinBusy(false);
     setLoginUsername('');
     setLoginPassword('');
     setLoginError(undefined);
@@ -52,15 +61,39 @@ export function AccountSwitcher({ open, onClose }: AccountSwitcherProps) {
     setView('pin');
   }
 
-  function handlePinComplete(pin: string) {
-    if (!pinTarget) return;
+  /**
+   * PIN 正確後，用該帳號保存的 refresh token 向後端換一組新的 token 再切換——
+   * 保存的 access token 只有 12 小時，直接拿舊 token 切換會在第一次呼叫 API 時被導回登入頁。
+   * 只有舊資料沒有 refresh token、或帳號已被停用時，才請使用者輸入一次密碼。
+   */
+  async function handlePinComplete(pin: string) {
+    if (!pinTarget || pinBusy) return;
     const verified = validatePin(pinTarget.user.id, pin);
     if (!verified) {
       setPinError('PIN 錯誤，請重試');
       return;
     }
-    saveAuth(verified.token, verified.user);
-    window.location.href = '/admin';
+    if (!verified.refreshToken) {
+      askPasswordOnce(verified);
+      return;
+    }
+    setPinBusy(true);
+    try {
+      const result = await exchangeRefreshToken(verified.refreshToken);
+      saveSession(result);
+      updateSavedAccountToken(result.user.id, result.accessToken, result.user, result.refreshToken);
+      window.location.href = '/admin';
+    } catch {
+      setPinBusy(false);
+      askPasswordOnce(verified);
+    }
+  }
+
+  function askPasswordOnce(account: SavedAccount) {
+    setLoginUsername(account.user.username);
+    setLoginPassword('');
+    setLoginError('這個帳號需要再輸入一次密碼，之後就能用 PIN 快速切換');
+    setView('login');
   }
 
   async function handleLogin(e: React.FormEvent) {
@@ -68,13 +101,13 @@ export function AccountSwitcher({ open, onClose }: AccountSwitcherProps) {
     setLoginError(undefined);
     setLoginSubmitting(true);
     try {
-      const result = await login(loginUsername.trim(), loginPassword);
-      // 若有 PIN 設定，儲存此帳號供下次快速切換
+      // 切換帳號一律視為「記住這台裝置」：拿到 refresh token，之後 PIN 切換不需要再打密碼
+      const result = await login(loginUsername.trim(), loginPassword, true);
       const existing = getSavedAccounts().find((a) => a.user.id === result.user.id);
       if (existing) {
-        saveAccount(result.accessToken, result.user as AuthUser, existing.pin);
+        saveAccount(result.accessToken, result.user as AuthUser, existing.pin, result.refreshToken);
       }
-      saveAuth(result.accessToken, result.user as AuthUser);
+      saveSession(result);
       window.location.href = '/admin';
     } catch (err) {
       setLoginError(err instanceof ApiError ? err.message : '登入失敗，請稍後再試');
@@ -83,7 +116,9 @@ export function AccountSwitcher({ open, onClose }: AccountSwitcherProps) {
     }
   }
 
+  /** 登出目前帳號：同時從 PIN 快速切換清單移除（PIN 切換「除非登出」都要能用） */
   function handleLogout() {
+    if (currentUser) removeSavedAccount(currentUser.id);
     clearAuth();
     window.location.href = '/login';
   }
@@ -99,9 +134,10 @@ export function AccountSwitcher({ open, onClose }: AccountSwitcherProps) {
           <PinPad
             title="輸入 4 位數 PIN"
             error={pinError}
-            onComplete={handlePinComplete}
+            onComplete={(pin) => void handlePinComplete(pin)}
             onCancel={() => { setPinTarget(null); setPinError(undefined); setView('list'); }}
           />
+          {pinBusy && <p className="text-sm text-slate-500">切換中…</p>}
           <KioskButton variant="ghost" fullWidth onClick={() => { setPinTarget(null); setPinError(undefined); setView('list'); }}>
             返回
           </KioskButton>

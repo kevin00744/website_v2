@@ -67,6 +67,14 @@ export function middleware(request: NextRequest) {
     }
   }
 
+  if (token && request.nextUrl.pathname.startsWith('/line')) {
+    const role = readRoleFromCookie(request);
+    // LINE 頁：除了會計以外都能進（對齊後端 LineAdminController 的 @Roles('staff', 'manager')）
+    if (role === 'accountant') {
+      return NextResponse.redirect(new URL('/admin', request.url));
+    }
+  }
+
   if (token && request.nextUrl.pathname.startsWith('/cms')) {
     const role = readRoleFromCookie(request);
     // 對齊後端 CmsController 的 admin/pages、admin/templates 系列路由 @Roles('admin')：
@@ -93,6 +101,7 @@ export const config = {
   matcher: [
     '/admin',
     '/customers/:path*',
+    '/calendar/:path*',
     '/inventory/:path*',
     '/stores/:path*',
     '/products/:path*',
@@ -104,6 +113,8 @@ export const config = {
     '/cms-templates/:path*',
     '/cms-articles/:path*',
     '/settings/:path*',
+    '/line/:path*',
+    '/line-test/:path*',
     '/login',
   ],
 };

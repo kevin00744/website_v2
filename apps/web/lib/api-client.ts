@@ -1,5 +1,45 @@
 import { translateErrorCode } from '@website-v2/copy';
-import { clearAuth, getAuthToken } from './auth';
+import { clearAuth, getAuthToken, getRefreshToken, saveSession, type SessionResult } from './auth';
+import { updateSavedAccountToken } from './multi-account';
+
+/**
+ * access token 過期（401）時，用 refresh token 換新；同時多支請求 401 只會換一次（共用 Promise）。
+ * 換新成功回 true（呼叫端重送原請求），沒有 refresh token 或換新失敗回 false（呼叫端導回登入頁）。
+ */
+let refreshing: Promise<boolean> | null = null;
+
+export function refreshSession(): Promise<boolean> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return Promise.resolve(false);
+  if (!refreshing) {
+    refreshing = (async () => {
+      try {
+        const res = await fetch(`${resolveApiBaseUrl()}/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refreshToken }),
+        });
+        if (!res.ok) return false;
+        const result = (await res.json()) as SessionResult;
+        saveSession(result);
+        updateSavedAccountToken(result.user.id, result.accessToken, result.user, result.refreshToken);
+        return true;
+      } catch {
+        return false;
+      } finally {
+        setTimeout(() => {
+          refreshing = null;
+        }, 0);
+      }
+    })();
+  }
+  return refreshing;
+}
+
+function redirectToLogin() {
+  clearAuth();
+  window.location.href = '/login';
+}
 
 /**
  * 外網連線會打不通的根因：NEXT_PUBLIC_API_BASE_URL 如果寫死成 http://localhost:3101/api/v2，
@@ -41,17 +81,26 @@ interface RequestOptions extends Omit<RequestInit, 'body'> {
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const { json, formData, headers, skipAuth, ...rest } = options;
-  const token = skipAuth ? undefined : getAuthToken();
 
-  const response = await fetch(`${resolveApiBaseUrl()}${path}`, {
-    ...rest,
-    headers: {
-      ...(json !== undefined ? { 'Content-Type': 'application/json' } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...headers,
-    },
-    body: formData ?? (json !== undefined ? JSON.stringify(json) : undefined),
-  });
+  const send = () => {
+    const token = skipAuth ? undefined : getAuthToken();
+    return fetch(`${resolveApiBaseUrl()}${path}`, {
+      ...rest,
+      headers: {
+        ...(json !== undefined ? { 'Content-Type': 'application/json' } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...headers,
+      },
+      body: formData ?? (json !== undefined ? JSON.stringify(json) : undefined),
+    });
+  };
+
+  let response = await send();
+
+  // access token 過期：先用 refresh token 換新再重送一次，換不到才導回登入頁
+  if (response.status === 401 && !skipAuth && typeof window !== 'undefined' && (await refreshSession())) {
+    response = await send();
+  }
 
   if (!response.ok) {
     let code = 'DEFAULT';
@@ -64,8 +113,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 
     // 登入逾時/token 失效：清掉本機憑證並導回登入頁，不留在一個「看起來活著但其實打不動 API」的畫面
     if (response.status === 401 && !skipAuth && typeof window !== 'undefined') {
-      clearAuth();
-      window.location.href = '/login';
+      redirectToLogin();
     }
 
     throw new ApiError(code, response.status);
@@ -88,10 +136,16 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
  * 開出來的新分頁只會看到一段 JSON 錯誤訊息而不是 PDF。
  */
 export async function apiRequestBlob(path: string): Promise<Blob> {
-  const token = getAuthToken();
-  const response = await fetch(`${resolveApiBaseUrl()}${path}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-  });
+  const send = () => {
+    const token = getAuthToken();
+    return fetch(`${resolveApiBaseUrl()}${path}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    });
+  };
+  let response = await send();
+  if (response.status === 401 && typeof window !== 'undefined' && (await refreshSession())) {
+    response = await send();
+  }
 
   if (!response.ok) {
     let code = 'DEFAULT';
@@ -102,8 +156,7 @@ export async function apiRequestBlob(path: string): Promise<Blob> {
       // PDF 端點出錯時後端一樣回 JSON（見 HttpExceptionFilter），抓不到就維持 DEFAULT
     }
     if (response.status === 401 && typeof window !== 'undefined') {
-      clearAuth();
-      window.location.href = '/login';
+      redirectToLogin();
     }
     throw new ApiError(code, response.status);
   }

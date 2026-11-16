@@ -97,6 +97,13 @@ export class CustomersController {
     return this.customersService.searchCustomers(actor, search, storeId);
   }
 
+  /** 最近 3 天內刪除、可還原的顧客。必須放在 @Get(':id') 之前，否則 'deleted' 會被當成 id 解析 */
+  @Get('deleted')
+  @Roles('manager')
+  listDeleted(@CurrentUser() actor: AuthenticatedUser) {
+    return this.customersService.listRecentlyDeleted(actor);
+  }
+
   @Get(':id')
   findOne(@CurrentUser() actor: AuthenticatedUser, @Param('id', ParseIntPipe) id: number) {
     return this.customersService.getCustomerDetail(actor, id);
@@ -140,14 +147,21 @@ export class CustomersController {
   }
 
   /**
-   * 軟刪除，故意覆寫 class 層級的 @Roles('dealer','manager')：刪顧客是比建檔/編輯更高風險的操作
-   * （牽連簽名/文件等法律效力紀錄），只開放給 admin/system_admin（透過 isAdminRole 超集放行），
-   * dealer/manager 不能刪，跟 Patch(':id') 的編輯權限刻意分開。
+   * 軟刪除。開放 manager（自己分店）與 admin/system_admin（isAdminRole 超集放行）；staff/dealer 不能刪。
+   * 顧客還有未用完的課程或儲值金時，service 層會再限制只有 system_admin 能刪。
+   * 刪除後 3 天內可用 POST :id/restore 還原。
    */
   @Delete(':id')
-  @Roles('admin')
-  delete(@Param('id', ParseIntPipe) id: number) {
-    return this.customersService.deleteCustomer(id);
+  @Roles('manager')
+  delete(@CurrentUser() actor: AuthenticatedUser, @Param('id', ParseIntPipe) id: number) {
+    return this.customersService.deleteCustomer(actor, id);
+  }
+
+  /** 還原 3 天內被刪除的顧客，權限同刪除（manager 限自己分店） */
+  @Post(':id/restore')
+  @Roles('manager')
+  restore(@CurrentUser() actor: AuthenticatedUser, @Param('id', ParseIntPipe) id: number) {
+    return this.customersService.restoreCustomer(actor, id);
   }
 
   /** 上傳文件照片（沿用 Version 1 的玩法：多張照片合成一份 PDF，page 1 留兩個簽名框） */

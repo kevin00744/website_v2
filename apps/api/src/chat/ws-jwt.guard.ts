@@ -52,7 +52,9 @@ export class WsJwtGuard implements CanActivate {
     if (!token) return null;
 
     try {
-      const payload = this.jwtService.verify<JwtPayload>(token, { secret: JWT_SECRET });
+      const payload = this.jwtService.verify<JwtPayload & { typ?: string }>(token, { secret: JWT_SECRET });
+      // refresh token 只能用來換 access token，不能拿來連 WebSocket
+      if (payload.typ) return null;
       const user = await this.prisma.user.findFirst({
         where: { id: payload.sub, deletedAt: null, isActive: true },
         select: { id: true, username: true, email: true, name: true, role: true, storeId: true },

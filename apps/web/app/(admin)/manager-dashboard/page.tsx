@@ -136,7 +136,7 @@ export default function ManagerDashboardPage() {
     .reduce((s, r) => s + r.amount, 0);
 
   if (!storeId) {
-    return <p className="py-16 text-center text-kiosk-base text-slate-500">此帳號未指定所屬分店。</p>;
+    return <p className="py-16 text-center text-kiosk-base text-slate-500">此帳號尚未設定所屬門市，請聯絡系統管理員。</p>;
   }
 
   return (
@@ -161,7 +161,7 @@ export default function ManagerDashboardPage() {
       <section className="mb-8">
         <h2 className="mb-3 text-kiosk-lg font-bold text-slate-800">員工出勤總覽</h2>
         {staff.length === 0 ? (
-          <p className="rounded-kiosk bg-slate-50 p-4 text-center text-kiosk-base text-slate-500">此分店尚無員工帳號</p>
+          <p className="rounded-kiosk bg-slate-50 p-4 text-center text-kiosk-base text-slate-500">目前尚無員工帳號</p>
         ) : (
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             {staff.map((s) => {

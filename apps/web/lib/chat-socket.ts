@@ -21,7 +21,8 @@ export function getChatSocket(): Socket {
   if (socket) return socket;
 
   socket = io(`${resolveWsOrigin()}/ws/chat`, {
-    auth: { token: getAuthToken() },
+    // 用函式形式：每次（重新）連線都讀最新 token，access token 自動換新後不會卡在舊 token
+    auth: (cb) => cb({ token: getAuthToken() }),
     transports: ['websocket'],
   });
   return socket;

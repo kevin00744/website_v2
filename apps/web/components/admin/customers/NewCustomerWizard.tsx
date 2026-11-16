@@ -4,28 +4,23 @@ import { useEffect, useMemo, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import {
-  customerBasicInfoRequireStoreSchema,
   customerBasicInfoWithOptionalStoreSchema,
   customerBasicInfoNonExosomeWithOptionalStoreSchema,
-  customerBasicInfoNonExosomeRequireStoreSchema,
   customerDuplicateSearchSchema,
   type CustomerBasicInfoWithOptionalStoreInput,
   type CustomerBasicInfoNonExosomeInput,
   type CustomerDetail,
   type CustomerListItem,
-  type StoreSummary,
 } from '@website-v2/shared-types';
 import { ApiError } from '@/lib/api-client';
-import { getAuthUser, type AuthUser } from '@/lib/auth';
 import { createCustomerWithSignature, createQuickCustomer, searchCustomers, signDisclaimer } from '@/lib/customers-api';
-import { listStores } from '@/lib/stores-api';
 import { useDebouncedValue } from '@/lib/use-debounce';
 import { KioskButton } from '../kiosk/KioskButton';
 import { KioskInput } from '../kiosk/KioskInput';
-import { KioskSelect } from '../kiosk/KioskSelect';
 import { MaskedPhoneInput } from '../kiosk/MaskedInput';
 import { SignatureCanvasStep, type SignaturePayload } from './SignatureCanvasStep';
 import { StaffSignatureStep } from './StaffSignatureStep';
+import { formatPhone } from '@/lib/format';
 
 type WizardStep = 'duplicate-check' | 'basic-info' | 'staff-signature' | 'customer-signature';
 
@@ -43,10 +38,6 @@ function buildStep2Defaults(query: string): Partial<CustomerBasicInfoWithOptiona
   return NATIONAL_ID_LIKE.test(trimmed) ? { nationalId: trimmed.toUpperCase() } : { name: trimmed };
 }
 
-function isAdminRole(role: AuthUser['role'] | undefined): boolean {
-  return role === 'admin' || role === 'system_admin';
-}
-
 /**
  * 建檔與簽署的不可分割交易：① 搜尋防重複 → ② 填基本資料（只在 state 暫存，不打 API）
  * → ③ 服務人員簽名（單純畫布，不顯示同意書全文）→ ④ 顧客閱讀同意書全文後在最下方簽名，
@@ -61,10 +52,8 @@ function isAdminRole(role: AuthUser['role'] | undefined): boolean {
  * 兩個各自獨立、可重試的簽署步驟」之間的取捨，失敗時 onCreated 不會被呼叫，
  * 管理員可以從顧客列表找到這筆剛建的紀錄，在詳情頁補簽。
  *
- * 分店欄位是「依登入角色動態出現」的：店長（manager）介面完全不顯示分店選擇，
- * 送出時也不帶 storeId（後端會自動用店長自己的 storeId，見 customers.service.ts 的
- * resolveCreateStore，就算這裡硬塞別的值也會被忽略）；管理員（admin/system_admin）
- * 則必須手動選一間店，這裡用 zod 動態切換 required/optional 來做即時防呆。
+ * 單一門市使用：任何角色都不顯示分店選擇，送出時也不帶 storeId，
+ * 後端會自動歸到唯一的門市（見 customers.service.ts 的 resolveCreateStore）。
  */
 export function NewCustomerWizard({ onCreated, onClose }: NewCustomerWizardProps) {
   const [step, setStep] = useState<WizardStep>('duplicate-check');
@@ -74,9 +63,6 @@ export function NewCustomerWizard({ onCreated, onClose }: NewCustomerWizardProps
   const [searching, setSearching] = useState(false);
   const debouncedQuery = useDebouncedValue(duplicateQuery, 400);
 
-  const [user, setUser] = useState<AuthUser>();
-  const [stores, setStores] = useState<StoreSummary[]>([]);
-  const [storesError, setStoresError] = useState<string>();
 
   const [basicInfo, setBasicInfo] = useState<CustomerBasicInfoWithOptionalStoreInput | CustomerBasicInfoNonExosomeInput>();
   const [isExosomeUser, setIsExosomeUser] = useState(false);
@@ -84,35 +70,12 @@ export function NewCustomerWizard({ onCreated, onClose }: NewCustomerWizardProps
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string>();
 
-  useEffect(() => {
-    setUser(getAuthUser());
-  }, []);
-
-  const requireStoreSelect = isAdminRole(user?.role);
-
-  useEffect(() => {
-    if (!requireStoreSelect) return;
-    let cancelled = false;
-    listStores()
-      .then((result) => {
-        if (!cancelled) setStores(result);
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setStoresError(error instanceof ApiError ? error.message : '載入分店清單失敗，請稍後再試');
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [requireStoreSelect]);
-
   const basicInfoSchema = useMemo(() => {
     if (isExosomeUser) {
-      return requireStoreSelect ? customerBasicInfoRequireStoreSchema : customerBasicInfoWithOptionalStoreSchema;
+      return customerBasicInfoWithOptionalStoreSchema;
     }
-    return requireStoreSelect ? customerBasicInfoNonExosomeRequireStoreSchema : customerBasicInfoNonExosomeWithOptionalStoreSchema;
-  }, [isExosomeUser, requireStoreSelect]);
+    return customerBasicInfoNonExosomeWithOptionalStoreSchema;
+  }, [isExosomeUser]);
 
   const {
     register,
@@ -272,7 +235,7 @@ export function NewCustomerWizard({ onCreated, onClose }: NewCustomerWizardProps
                   key={candidate.id}
                   className="rounded-kiosk border-2 border-amber-300 bg-amber-50 px-5 py-4 text-kiosk-base text-slate-800"
                 >
-                  找到「{candidate.name}」（{candidate.phone ?? '無電話'} / {candidate.nationalId ?? '無身分證號'}），
+                  找到「{candidate.name}」（{formatPhone(candidate.phone) ?? '無電話'} / {candidate.nationalId ?? '無身分證號'}），
                   這位是同一個人嗎？
                 </li>
               ))}
@@ -292,17 +255,6 @@ export function NewCustomerWizard({ onCreated, onClose }: NewCustomerWizardProps
 
       {step === 'basic-info' && (
         <form onSubmit={handleSubmit(onSubmitBasicInfo)} className="flex flex-1 flex-col gap-5 overflow-y-auto">
-          {requireStoreSelect && (
-            <KioskSelect
-              label="分店"
-              required
-              options={stores.map((store) => ({ value: String(store.id), label: `${store.code} ${store.name}` }))}
-              placeholder="請選擇要把這位顧客建到哪一家門市"
-              errorMessage={(errors.storeId?.message as string | undefined) ?? storesError}
-              isValid={Boolean(dirtyFields.storeId) && !errors.storeId}
-              {...register('storeId', { valueAsNumber: true })}
-            />
-          )}
           <KioskInput
             label="姓名"
             required

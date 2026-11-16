@@ -5,23 +5,22 @@ import type { CustomerDetail, CustomerListItem } from '@website-v2/shared-types'
 import { ApiError } from '@/lib/api-client';
 import { getAuthUser, type AuthUser } from '@/lib/auth';
 import { searchCustomers } from '@/lib/customers-api';
-import { listStores } from '@/lib/stores-api';
-import type { StoreSummary } from '@website-v2/shared-types';
 import { CenteredModal } from '@/components/admin/kiosk/CenteredModal';
 import { KioskButton } from '@/components/admin/kiosk/KioskButton';
-import { KioskSelect } from '@/components/admin/kiosk/KioskSelect';
 import { CustomerCardList } from '@/components/admin/customers/CustomerCardList';
 import { CustomerDetailDrawer } from '@/components/admin/customers/CustomerDetailDrawer';
 import { CustomerSearchBar } from '@/components/admin/customers/CustomerSearchBar';
 import { CustomerTable } from '@/components/admin/customers/CustomerTable';
 import { NewCustomerWizard } from '@/components/admin/customers/NewCustomerWizard';
+import { RecentlyDeletedModal } from '@/components/admin/customers/RecentlyDeletedModal';
 
 function canCreateCustomer(role: AuthUser['role'] | undefined): boolean {
   return role === 'admin' || role === 'system_admin' || role === 'manager' || role === 'staff';
 }
 
-function canFilterByStore(role: AuthUser['role'] | undefined): boolean {
-  return role === 'admin' || role === 'system_admin';
+/** 對齊後端 GET /customers/deleted、POST /customers/:id/restore 的 @Roles('manager') */
+function canRestoreCustomer(role: AuthUser['role'] | undefined): boolean {
+  return role === 'admin' || role === 'system_admin' || role === 'manager';
 }
 
 export default function CustomersPage() {
@@ -29,29 +28,27 @@ export default function CustomersPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string>();
   const [wizardOpen, setWizardOpen] = useState(false);
+  const [deletedOpen, setDeletedOpen] = useState(false);
   const [selectedCustomerId, setSelectedCustomerId] = useState<number>();
   const [user, setUser] = useState<AuthUser>();
-  const [stores, setStores] = useState<StoreSummary[]>([]);
 
-  // Use refs for filter state to avoid stale closure in CustomerSearchBar callback
-  const filterRef = useRef({ query: '', storeId: '' });
-  const [filterStoreId, setFilterStoreId] = useState('');
+  const queryRef = useRef('');
 
   useEffect(() => {
-    const authUser = getAuthUser();
-    setUser(authUser);
-    if (canFilterByStore(authUser?.role)) {
-      listStores().then(setStores).catch(() => setStores([]));
+    setUser(getAuthUser());
+    // 從行事曆「顧客資料」連過來：/customers?customerId=123 直接打開該顧客
+    const id = Number(new URLSearchParams(window.location.search).get('customerId'));
+    if (id) {
+      setSelectedCustomerId(id);
+      window.history.replaceState(null, '', '/customers');
     }
   }, []);
 
-  const doSearch = useCallback(async (query: string, _region: string, storeId: string) => {
+  const doSearch = useCallback(async (query: string) => {
     setLoading(true);
     setLoadError(undefined);
     try {
-      const result = await searchCustomers(query, {
-        storeId: storeId ? Number(storeId) : undefined,
-      });
+      const result = await searchCustomers(query);
       setCustomers(result);
     } catch (error) {
       setLoadError(error instanceof ApiError ? error.message : '系統出了一點問題，請稍後再試');
@@ -60,85 +57,53 @@ export default function CustomersPage() {
     }
   }, []);
 
-  // Stable onSearch callback for CustomerSearchBar — reads current filters from ref
+  // Stable onSearch callback for CustomerSearchBar — 記住目前關鍵字，新增/刪除/還原後用同一個關鍵字重新整理
   const handleSearch = useCallback((query: string) => {
-    filterRef.current.query = query;
-    void doSearch(query, '', filterRef.current.storeId);
+    queryRef.current = query;
+    void doSearch(query);
   }, [doSearch]);
 
   // Initial load
   useEffect(() => {
-    void doSearch('', '', '');
+    void doSearch('');
   }, [doSearch]);
-
-  function handleStoreChange(storeId: string) {
-    filterRef.current.storeId = storeId;
-    setFilterStoreId(storeId);
-    void doSearch(filterRef.current.query, '', storeId);
-  }
-
-  function clearFilters() {
-    filterRef.current.storeId = '';
-    setFilterStoreId('');
-    void doSearch(filterRef.current.query, '', '');
-  }
 
   function handleCreated(customer: CustomerDetail) {
     setWizardOpen(false);
     setSelectedCustomerId(customer.id);
-    void doSearch(filterRef.current.query, '', filterRef.current.storeId);
+    void doSearch(queryRef.current);
   }
 
   function handleUpdated(_customer: CustomerDetail) {
-    void doSearch(filterRef.current.query, '', filterRef.current.storeId);
+    void doSearch(queryRef.current);
   }
 
   function handleDeleted() {
     setSelectedCustomerId(undefined);
-    void doSearch(filterRef.current.query, '', filterRef.current.storeId);
+    void doSearch(queryRef.current);
   }
-
-  const showFilters = canFilterByStore(user?.role);
-  const storeOptions = [
-    { value: '', label: '全部分店' },
-    ...stores.map((s) => ({ value: String(s.id), label: s.name })),
-  ];
-  const hasActiveFilter = filterStoreId;
 
   return (
     <div className="flex flex-col gap-6 pb-24 md:pb-0">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <h1 className="text-kiosk-xl font-bold text-slate-900">顧客資料</h1>
-        {canCreateCustomer(user?.role) && (
-          <KioskButton onClick={() => setWizardOpen(true)} className="hidden md:inline-flex">
-            ＋ 新增顧客
-          </KioskButton>
-        )}
+        <div className="flex flex-wrap gap-3">
+          {canRestoreCustomer(user?.role) && (
+            <KioskButton variant="ghost" onClick={() => setDeletedOpen(true)}>
+              🗑 最近刪除
+            </KioskButton>
+          )}
+          {canCreateCustomer(user?.role) && (
+            <KioskButton onClick={() => setWizardOpen(true)} className="hidden md:inline-flex">
+              ＋ 新增顧客
+            </KioskButton>
+          )}
+        </div>
       </div>
 
       <CustomerSearchBar onSearch={handleSearch} />
 
-      {showFilters && (
-        <div className="flex flex-wrap gap-3">
-          <div className="min-w-[180px]">
-            <KioskSelect
-              label="分店"
-              options={storeOptions}
-              value={filterStoreId}
-              onChange={(e) => handleStoreChange(e.target.value)}
-            />
-          </div>
-          {hasActiveFilter && (
-            <div className="flex items-end">
-              <KioskButton variant="ghost" onClick={clearFilters}>
-                清除篩選
-              </KioskButton>
-            </div>
-          )}
-        </div>
-      )}
-
-      {loadError && (
+          {loadError && (
         <p className="text-kiosk-base font-semibold text-kiosk-danger" role="alert">
           ⚠️ {loadError}
         </p>
@@ -161,6 +126,12 @@ export default function CustomersPage() {
 
       <CenteredModal open={wizardOpen} onClose={() => setWizardOpen(false)} title="新增顧客">
         <NewCustomerWizard onCreated={handleCreated} onClose={() => setWizardOpen(false)} />
+      </CenteredModal>
+
+      <CenteredModal open={deletedOpen} onClose={() => setDeletedOpen(false)} title="最近刪除的顧客" closeOnOverlayClick>
+        {deletedOpen && (
+          <RecentlyDeletedModal onRestored={() => void doSearch(queryRef.current)} />
+        )}
       </CenteredModal>
 
       <CenteredModal

@@ -1,16 +1,10 @@
 import type { CustomerListItem } from '@website-v2/shared-types';
-import { formatDate } from '@/lib/format';
+import { formatDate, formatPhone } from '@/lib/format';
 
 interface CustomerCardListProps {
   customers: CustomerListItem[];
   onSelect: (customer: CustomerListItem) => void;
 }
-
-const REGION_LABEL: Record<CustomerListItem['region'], string> = {
-  A: '北部',
-  B: '中部',
-  C: '南部',
-};
 
 /**
  * 手機版（<768px）：卡片式列表，取代表格（表格在小螢幕擠成一團很難點）。
@@ -27,14 +21,11 @@ export function CustomerCardList({ customers, onSelect }: CustomerCardListProps)
             className="flex min-h-kiosk w-full flex-col gap-1 rounded-kiosk bg-white px-5 py-4 text-left shadow-sm active:bg-kiosk-primary/5"
           >
             <span className="text-kiosk-lg font-bold text-slate-900">{customer.name}</span>
-            <span className="text-kiosk-base text-slate-600">{customer.phone ?? '尚未填寫電話'}</span>
+            <span className="text-kiosk-base text-slate-600">{formatPhone(customer.phone) ?? '尚未填寫電話'}</span>
             <span className="text-kiosk-base text-slate-500">{customer.nationalId ?? '—'}</span>
             <span className="text-kiosk-base text-slate-500">
-              {customer.customerCode ?? '—'} · {REGION_LABEL[customer.region]} {customer.storeName}
+              {customer.customerCode ?? '—'}
             </span>
-            {customer.dealerName && (
-              <span className="text-kiosk-base text-slate-400">負責代理：{customer.dealerName}</span>
-            )}
             <span className="text-kiosk-base text-slate-400">建立於 {formatDate(customer.createdAt)}</span>
           </button>
         </li>

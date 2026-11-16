@@ -40,6 +40,43 @@ export function saveAuth(token: string, user: AuthUser, rememberDays = 1) {
   setCookie(USER_COOKIE, JSON.stringify(user), rememberDays);
 }
 
+/**
+ * Refresh token：「記住這台裝置」與 PIN 帳號才會有，用來在 access token（12 小時）過期後自動換新，
+ * 讓裝置不會因為時間到或系統重新部署而被登出。存在 localStorage（middleware 不需要讀它）。
+ */
+const REFRESH_KEY = 'wv2_refresh';
+/** 有 refresh token 的裝置：cookie 也保留 180 天，避免 middleware 因 cookie 過期把人導回 /login */
+export const REMEMBER_DAYS = 180;
+
+export function getRefreshToken(): string | undefined {
+  try {
+    return localStorage.getItem(REFRESH_KEY) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function setRefreshToken(token: string | undefined) {
+  try {
+    if (token) localStorage.setItem(REFRESH_KEY, token);
+    else localStorage.removeItem(REFRESH_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+export interface SessionResult {
+  accessToken: string;
+  user: AuthUser;
+  refreshToken?: string;
+}
+
+/** 登入 / 換新 / PIN 切換後統一呼叫：有 refresh token 就長期保存，否則只保存 1 天 */
+export function saveSession(result: SessionResult) {
+  setRefreshToken(result.refreshToken);
+  saveAuth(result.accessToken, result.user, result.refreshToken ? REMEMBER_DAYS : 1);
+}
+
 export function getAuthToken(): string | undefined {
   if (typeof document === 'undefined') return undefined;
   return getCookie(TOKEN_COOKIE);
@@ -59,4 +96,5 @@ export function getAuthUser(): AuthUser | undefined {
 export function clearAuth() {
   clearCookie(TOKEN_COOKIE);
   clearCookie(USER_COOKIE);
+  setRefreshToken(undefined);
 }

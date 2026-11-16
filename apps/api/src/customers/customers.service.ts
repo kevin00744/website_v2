@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AppError } from '../common/errors/app-error';
 import { buildRecordHash, hashJson, MIN_SIGNATURE_POINTS, type SignaturePoint } from '../signature/signature-hash.util';
 import { canActorAccessCustomer, customerVisibilityWhere } from '../auth/role-access.util';
+import { formatPhoneDisplay, normalizePhone, normalizePhoneOrNull, phoneVariants } from '../common/phone.util';
 import type { AuthenticatedUser } from '../auth/types';
 import {
   applySignaturesToDisclaimerPdf,
@@ -133,6 +134,21 @@ type DetailRow = Prisma.CustomerGetPayload<{ select: typeof DETAIL_SELECT }>;
 /** 列表只取最相關的前 N 筆，確保「秒出」的體感 */
 const SEARCH_RESULT_LIMIT = 30;
 
+/** 刪除後可還原的期限：3 天 */
+export const CUSTOMER_RESTORE_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+
+export interface DeletedCustomerItem {
+  id: number;
+  name: string;
+  phone: string | null;
+  customerCode: string | null;
+  storeId: number;
+  storeName: string;
+  deletedAt: string;
+  restoreDeadline: string;
+  deletedBy: { id: number; name: string; username: string } | null;
+}
+
 @Injectable()
 export class CustomersService {
   constructor(private readonly prisma: PrismaService) {}
@@ -149,6 +165,8 @@ export class CustomersService {
     storeId?: number,
   ): Promise<CustomerListItem[]> {
     const trimmed = search?.trim();
+    // 電話一律存純數字：關鍵字像電話（只含數字、dash、空白、+）時，去掉符號再搜尋
+    const phoneQuery = trimmed && /^[\d\s\-+]+$/.test(trimmed) ? normalizePhone(trimmed) || trimmed : trimmed;
 
     const where: Prisma.CustomerWhereInput = {
       deletedAt: null,
@@ -158,7 +176,7 @@ export class CustomersService {
         ? {
             OR: [
               { name: { contains: trimmed, mode: 'insensitive' } },
-              { phone: { contains: trimmed, mode: 'insensitive' } },
+              { phone: { contains: phoneQuery, mode: 'insensitive' } },
               { nationalId: { contains: trimmed, mode: 'insensitive' } },
             ],
           }
@@ -225,14 +243,16 @@ export class CustomersService {
     // 提早正規化大小寫，下面的重複檢查跟最終存檔（含顧客編號拼接）都用同一個值，
     // 避免 "a123456789" 跟 "A123456789"被當成兩個不同人通過重複檢查。
     const normalizedNationalId = input.nationalId.trim().toUpperCase();
+    // 電話一律存純數字（0981-675-415 → 0981675415），重複檢查也用同一個值
+    const phone = normalizePhoneOrNull(input.phone);
 
-    if (input.phone) {
+    if (phone) {
       const existingPhone = await this.prisma.customer.findFirst({
-        where: { phone: input.phone, deletedAt: null },
+        where: { phone: { in: phoneVariants(phone) }, deletedAt: null },
         select: { id: true },
       });
       if (existingPhone) {
-        throw new AppError('CUSTOMER_PHONE_EXISTS', `phone ${input.phone} already exists`, 409);
+        throw new AppError('CUSTOMER_PHONE_EXISTS', `phone ${phone} already exists`, 409);
       }
     }
 
@@ -263,7 +283,7 @@ export class CustomersService {
             name: input.name.trim(),
             nationalId: normalizedNationalId,
             customerCode,
-            phone: input.phone,
+            phone,
             address: input.address,
             line: input.line,
             email: input.email,
@@ -278,7 +298,7 @@ export class CustomersService {
           customerName: customer.name,
           customerCode: customer.customerCode,
           nationalId: customer.nationalId ?? input.nationalId,
-          phone: customer.phone,
+          phone: formatPhoneDisplay(customer.phone),
           address: customer.address,
           storeName: store.name,
           storeCode: store.code,
@@ -378,11 +398,18 @@ export class CustomersService {
       return store;
     }
 
-    if (!requestedStoreId) {
-      throw new AppError('STORE_REQUIRED', 'storeId is required for this role', 400);
+    // 單一門市模式：admin/system_admin 沒指定分店時，用自己所屬的店；自己也沒有所屬店時，
+    // 系統裡只有一家門市就直接用那家（介面已不再顯示分店選擇）。
+    let storeId = requestedStoreId ?? actor.storeId ?? undefined;
+    if (!storeId) {
+      const stores = await this.prisma.store.findMany({ where: { deletedAt: null }, select: { id: true }, take: 2 });
+      if (stores.length !== 1) {
+        throw new AppError('STORE_REQUIRED', 'storeId is required when there is not exactly one store', 400);
+      }
+      storeId = stores[0].id;
     }
 
-    const store = await this.prisma.store.findFirst({ where: { id: requestedStoreId, deletedAt: null } });
+    const store = await this.prisma.store.findFirst({ where: { id: storeId, deletedAt: null } });
     if (!store) {
       throw new AppError('STORE_NOT_FOUND', 'selected store does not exist', 404);
     }
@@ -414,17 +441,18 @@ export class CustomersService {
   ): Promise<CustomerDetail> {
     const store = await this.resolveCreateStore(actor, input.storeId);
     if (!input.name?.trim()) throw new AppError('CUSTOMER_NAME_REQUIRED', 'name is required');
-    if (!input.phone?.trim()) throw new AppError('CUSTOMER_PHONE_REQUIRED', '電話為必填欄位');
+    const phone = normalizePhone(input.phone);
+    if (!phone) throw new AppError('CUSTOMER_PHONE_REQUIRED', '電話為必填欄位');
 
     const existingPhone = await this.prisma.customer.findFirst({
-      where: { phone: input.phone, storeId: store.id, deletedAt: null },
+      where: { phone: { in: phoneVariants(phone) }, storeId: store.id, deletedAt: null },
     });
-    if (existingPhone) throw new AppError('CUSTOMER_PHONE_EXISTS', `phone ${input.phone} already exists`, 409);
+    if (existingPhone) throw new AppError('CUSTOMER_PHONE_EXISTS', `phone ${phone} already exists`, 409);
 
     const customer = await this.prisma.customer.create({
       data: {
         name: input.name.trim(),
-        phone: input.phone.trim(),
+        phone,
         nationalId: input.nationalId?.trim().toUpperCase() || null,
         address: input.address,
         line: input.line,
@@ -448,17 +476,19 @@ export class CustomersService {
       throw new AppError('CUSTOMER_NOT_FOUND', `customer ${id} not found or not visible to actor ${actor.id}`, 404);
     }
 
-    if (input.phone && input.phone !== existing.phone) {
+    // phone 欄位有傳才更新；一律存純數字，空字串視為清除
+    const phone = input.phone === undefined ? undefined : normalizePhoneOrNull(input.phone);
+    if (phone && phone !== normalizePhone(existing.phone)) {
       const duplicatePhone = await this.prisma.customer.findFirst({
-        where: { phone: input.phone, deletedAt: null, id: { not: id } },
+        where: { phone: { in: phoneVariants(phone) }, deletedAt: null, id: { not: id } },
         select: { id: true },
       });
       if (duplicatePhone) {
-        throw new AppError('CUSTOMER_PHONE_EXISTS', `phone ${input.phone} already exists`, 409);
+        throw new AppError('CUSTOMER_PHONE_EXISTS', `phone ${phone} already exists`, 409);
       }
     }
 
-    const { phone, address, line, email, note, isExosomeUser } = input as typeof input & { isExosomeUser?: boolean };
+    const { address, line, email, note, isExosomeUser } = input as typeof input & { isExosomeUser?: boolean };
     const inputNationalId = (input as { nationalId?: string }).nationalId;
 
     // nationalId 僅允許「補填」（目前為 null 才能設定），不允許修改已有的值
@@ -485,17 +515,115 @@ export class CustomersService {
 
   /**
    * 軟刪除：顧客有簽名/文件/庫存異動等歷史紀錄掛在身上，刪掉資料列會讓那些紀錄斷掉關聯，
-   * 所以只設 deletedAt，跟既有的查詢慣例（所有顧客查詢都帶 `deletedAt: null`）一致——
-   * 軟刪後這個顧客就會自動從搜尋/清單裡消失，不需要額外改任何查詢邏輯。
-   * 這支只允許 admin/system_admin 呼叫（見 CustomersController 對這支路由的 @Roles('admin') 覆寫），
-   * 所以不需要再用 canActorAccessCustomer 檢查區域/分店範圍。
+   * 所以只設 deletedAt（+ deletedById），跟既有的查詢慣例（所有顧客查詢都帶 `deletedAt: null`）一致。
+   *
+   * 權限（controller 已用 @Roles('manager') 擋掉 staff/dealer，這裡再做資料層檢查）：
+   * - manager 只能刪自己分店的顧客；admin/system_admin 不限分店。
+   * - 顧客還有「未用完的課程堂數」或「儲值金／贈送金／抵用金餘額」時，只有 system_admin 能刪，
+   *   避免門市誤刪掉顧客還沒用完、已經付過錢的權益。
+   * 刪除後 CUSTOMER_RESTORE_WINDOW_MS（3 天）內可用 restoreCustomer 還原。
    */
-  async deleteCustomer(id: number): Promise<void> {
-    const existing = await this.prisma.customer.findFirst({ where: { id, deletedAt: null }, select: { id: true } });
-    if (!existing) {
-      throw new AppError('CUSTOMER_NOT_FOUND', `customer ${id} not found`, 404);
+  async deleteCustomer(actor: AuthenticatedUser, id: number): Promise<void> {
+    const existing = await this.prisma.customer.findFirst({
+      where: { id, deletedAt: null },
+      select: {
+        id: true,
+        storeId: true,
+        storeCredit: true,
+        wallet: { select: { balance: true, bonusBalance: true } },
+        customerCourses: { select: { totalSessions: true, usedSessions: true } },
+      },
+    });
+    if (!existing || !canActorAccessCustomer(actor, { storeId: existing.storeId })) {
+      throw new AppError('CUSTOMER_NOT_FOUND', `customer ${id} not found or not visible to actor ${actor.id}`, 404);
     }
-    await this.prisma.customer.update({ where: { id }, data: { deletedAt: new Date() } });
+
+    const hasRemainingCourses = existing.customerCourses.some((c) => c.totalSessions - c.usedSessions > 0);
+    const hasRemainingBalance =
+      (existing.wallet?.balance ?? 0) > 0 ||
+      (existing.wallet?.bonusBalance ?? 0) > 0 ||
+      existing.storeCredit.greaterThan(0);
+    if ((hasRemainingCourses || hasRemainingBalance) && actor.role !== 'system_admin') {
+      throw new AppError(
+        'CUSTOMER_HAS_REMAINING_VALUE',
+        `customer ${id} still has unused courses or balance; only system_admin can delete`,
+        403,
+      );
+    }
+
+    await this.prisma.customer.update({
+      where: { id },
+      data: { deletedAt: new Date(), deletedById: actor.id },
+    });
+  }
+
+  /** 最近 3 天內被刪除、actor 看得到的顧客（給「最近刪除」清單用），越晚刪的排越前面 */
+  async listRecentlyDeleted(actor: AuthenticatedUser): Promise<DeletedCustomerItem[]> {
+    const since = new Date(Date.now() - CUSTOMER_RESTORE_WINDOW_MS);
+    const rows = await this.prisma.customer.findMany({
+      where: { deletedAt: { gte: since }, ...customerVisibilityWhere(actor) },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        customerCode: true,
+        deletedAt: true,
+        store: { select: { id: true, name: true } },
+        deletedBy: { select: { id: true, name: true, username: true } },
+      },
+      orderBy: { deletedAt: 'desc' },
+      take: SEARCH_RESULT_LIMIT,
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      phone: r.phone,
+      customerCode: r.customerCode,
+      storeId: r.store.id,
+      storeName: r.store.name,
+      deletedAt: r.deletedAt!.toISOString(),
+      restoreDeadline: new Date(r.deletedAt!.getTime() + CUSTOMER_RESTORE_WINDOW_MS).toISOString(),
+      deletedBy: r.deletedBy ? { id: r.deletedBy.id, name: r.deletedBy.name, username: r.deletedBy.username } : null,
+    }));
+  }
+
+  /**
+   * 還原軟刪除的顧客：只能在刪除後 3 天內還原，超過期限一律拒絕（資料仍保留在 DB，不做實體刪除）。
+   * 還原前再檢查一次電話/身分證是否已被「刪除期間新建的顧客」用掉，避免還原後出現重複顧客。
+   */
+  async restoreCustomer(actor: AuthenticatedUser, id: number): Promise<CustomerDetail> {
+    const existing = await this.prisma.customer.findFirst({
+      where: { id, deletedAt: { not: null } },
+      select: { id: true, storeId: true, phone: true, nationalId: true, deletedAt: true },
+    });
+    if (!existing || !canActorAccessCustomer(actor, { storeId: existing.storeId })) {
+      throw new AppError('CUSTOMER_NOT_FOUND', `deleted customer ${id} not found or not visible to actor ${actor.id}`, 404);
+    }
+    if (Date.now() - existing.deletedAt!.getTime() > CUSTOMER_RESTORE_WINDOW_MS) {
+      throw new AppError('CUSTOMER_RESTORE_EXPIRED', `customer ${id} was deleted more than 3 days ago`, 409);
+    }
+
+    if (existing.phone) {
+      const dup = await this.prisma.customer.findFirst({
+        where: { phone: existing.phone, deletedAt: null, id: { not: id } },
+        select: { id: true },
+      });
+      if (dup) throw new AppError('CUSTOMER_PHONE_EXISTS', `phone ${existing.phone} already used by customer ${dup.id}`, 409);
+    }
+    if (existing.nationalId) {
+      const dup = await this.prisma.customer.findFirst({
+        where: { nationalId: existing.nationalId, deletedAt: null, id: { not: id } },
+        select: { id: true },
+      });
+      if (dup) throw new AppError('CUSTOMER_NATIONAL_ID_EXISTS', `nationalId already used by customer ${dup.id}`, 409);
+    }
+
+    const restored = await this.prisma.customer.update({
+      where: { id },
+      data: { deletedAt: null, deletedById: null },
+      select: DETAIL_SELECT,
+    });
+    return toDetail(restored);
   }
 
   /**
@@ -686,7 +814,7 @@ export class CustomersService {
       customerName: customer.name,
       customerCode: customer.customerCode,
       nationalId: customer.nationalId,
-      phone: customer.phone,
+      phone: formatPhoneDisplay(customer.phone),
       storeName: customer.store.name,
       signedAt: customer.exosomeConsentSignedAt,
       signatureImageUrl: customer.exosomeConsentSignatureUrl,

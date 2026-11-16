@@ -60,7 +60,7 @@ export function ResetPasswordModal({ user, onClose, onDone }: ResetPasswordModal
             label="新密碼"
             type="password"
             required
-            placeholder="至少 8 個字元"
+            placeholder="至少 4 個字元（可只用數字）"
             errorMessage={errors.newPassword?.message}
             isValid={Boolean(dirtyFields.newPassword) && !errors.newPassword}
             {...register('newPassword')}

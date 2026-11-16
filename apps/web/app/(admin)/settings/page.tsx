@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { ApiError } from '@/lib/api-client';
-import { changeOwnPassword } from '@/lib/auth-api';
+import { changeOwnPassword, issueRefreshToken } from '@/lib/auth-api';
 import { updateSelf } from '@/lib/users-api';
-import { getAuthUser, getAuthToken } from '@/lib/auth';
+import { getAuthUser, getAuthToken, saveSession } from '@/lib/auth';
 import { saveAccount, getSavedAccounts, removeSavedAccount } from '@/lib/multi-account';
 import { KioskButton } from '@/components/admin/kiosk/KioskButton';
 import { KioskInput } from '@/components/admin/kiosk/KioskInput';
@@ -93,7 +93,7 @@ export default function SettingsPage() {
 
   async function onPasswordSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (newPw.length < 8) { setPwError('新密碼至少 8 個字元'); return; }
+    if (newPw.length < 4) { setPwError('新密碼至少 4 個字元'); return; }
     if (newPw !== confirmPw) { setPwError('兩次輸入的新密碼不一致'); return; }
     setPwSubmitting(true);
     setPwError(undefined);
@@ -123,7 +123,7 @@ export default function SettingsPage() {
     }
   }, [currentUser]);
 
-  function onPinSave(e: React.FormEvent) {
+  async function onPinSave(e: React.FormEvent) {
     e.preventDefault();
     setPinError(undefined);
     setPinDone(false);
@@ -132,7 +132,17 @@ export default function SettingsPage() {
     const user = getAuthUser();
     const token = getAuthToken();
     if (!user || !token) { setPinError('請重新登入後再試'); return; }
-    saveAccount(token, user, pin);
+    // 取得長效 refresh token 一起保存：之後 PIN 切換用它換新 token，只要沒登出就不需要重打密碼。
+    // 這台裝置也因此改為長期保持登入。
+    let refreshToken: string;
+    try {
+      refreshToken = (await issueRefreshToken()).refreshToken;
+    } catch (err) {
+      setPinError(err instanceof ApiError ? err.message : '設定失敗，請稍後再試');
+      return;
+    }
+    saveSession({ accessToken: token, user, refreshToken });
+    saveAccount(token, user, pin, refreshToken);
     setIsSaved(true);
     setPinDone(true);
     setPin('');
@@ -243,7 +253,7 @@ export default function SettingsPage() {
                 label="新密碼"
                 type="password"
                 required
-                placeholder="至少 8 個字元"
+                placeholder="至少 4 個字元（可只用數字）"
                 value={newPw}
                 onChange={(e) => setNewPw(e.target.value)}
               />

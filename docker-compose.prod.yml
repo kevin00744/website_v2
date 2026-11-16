@@ -1,0 +1,62 @@
+name: website_v2_prod
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: website_v2
+      POSTGRES_USER: website_v2_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U website_v2_user -d website_v2"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    image: node:20-slim
+    restart: unless-stopped
+    working_dir: /workspace/apps/api
+    volumes:
+      - .:/workspace
+    environment:
+      DATABASE_URL: postgresql://website_v2_user:${DB_PASSWORD}@db:5432/website_v2
+      PORT: "3000"
+      JWT_SECRET: ${JWT_SECRET}
+      WEB_ORIGIN: https://${DOMAIN}
+      # LINE 整合（測試期，LINE_ENABLED=true 才會啟用）
+      LINE_ENABLED: ${LINE_ENABLED:-false}
+      LINE_STORE_ID: ${LINE_STORE_ID:-}
+      LINE_CHANNEL_SECRET: ${LINE_CHANNEL_SECRET:-}
+      LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN:-}
+      LINE_LOGIN_CHANNEL_ID: ${LINE_LOGIN_CHANNEL_ID:-}
+      LINE_LIFF_ID: ${LINE_LIFF_ID:-}
+    ports:
+      - "127.0.0.1:3101:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: sh -c "apt-get update -qq && apt-get install -y -qq openssl > /dev/null && npx prisma migrate deploy && node dist/src/main.js"
+
+  web:
+    image: node:20-slim
+    restart: unless-stopped
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    environment:
+      CMS_API_INTERNAL_URL: http://api:3000/api/v2
+      NEXT_PUBLIC_API_BASE_URL: https://${DOMAIN}/api/v2
+      # 注意：NEXT_PUBLIC_ 變數在 next build 時寫入，build 前就要設好
+      NEXT_PUBLIC_LIFF_ID: ${LINE_LIFF_ID:-}
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - api
+    command: node_modules/next/dist/bin/next start apps/web -p 3000
+
+volumes:
+  db_data:

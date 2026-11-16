@@ -94,7 +94,7 @@ export function InventoryConsumeModal({ open, onClose, customerId, storeId, onRe
           ⚠️ {loadError}
         </p>
       )}
-      {!loadError && products.length === 0 && <p className="text-kiosk-base text-slate-500">這間分店目前沒有庫存可以使用</p>}
+      {!loadError && products.length === 0 && <p className="text-kiosk-base text-slate-500">目前沒有庫存可以使用</p>}
 
       {products.length > 0 && (
         <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5">

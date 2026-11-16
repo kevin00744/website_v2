@@ -13,6 +13,7 @@ const isAdminManagerOrAccountant = (r: AuthUser['role']) => isAdminOrManager(r) 
 
 export const NAVIGATION_CONFIG: NavItem[] = [
   { href: '/customers',         label: '顧客資料',   icon: '👥' },
+  { href: '/calendar',          label: '預約行事曆', icon: '📅', roleGuard: (r) => r === 'staff' || isAdminOrManager(r) },
   { href: '/attendance',        label: '打卡',       icon: '🕐', roleGuard: (r) => r === 'staff' || r === 'manager' || isAdmin(r) },
   { href: '/manager-dashboard', label: '考勤 & 業績', icon: '📊', roleGuard: isAdminManagerOrAccountant },
   { href: '/financial',         label: '財務帳務',   icon: '💰', roleGuard: isAdminManagerOrAccountant },
@@ -21,5 +22,7 @@ export const NAVIGATION_CONFIG: NavItem[] = [
   { href: '/store-staff',       label: '員工帳號',   icon: '👤', roleGuard: isAdminOrManager },
   { href: '/store-service-items', label: '服務品項', icon: '✂️', roleGuard: isAdminOrManager },
   { href: '/promotion-plans',   label: '促銷方案',   icon: '🎁', roleGuard: isAdminOrManager },
+  // LINE：除了會計以外都開放（頁內「設定狀態」只有 system_admin 看得到）
+  { href: '/line',              label: 'LINE',       icon: '💬', roleGuard: (r) => r !== 'accountant' },
   { href: '/settings',          label: '個人設定',   icon: '⚙️' },
 ];

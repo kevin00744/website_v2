@@ -16,7 +16,20 @@ export class AuthController {
 
   @Post('login')
   login(@Body() dto: LoginDto) {
-    return this.authService.login(dto.username, dto.password);
+    return this.authService.login(dto.username, dto.password, dto.rememberDevice === true);
+  }
+
+  /** 用 refresh token 換新的 access token（不需要 JWT，因為 access token 可能已過期） */
+  @Post('refresh')
+  refresh(@Body() dto: { refreshToken?: string }) {
+    return this.authService.refresh(dto.refreshToken);
+  }
+
+  /** 替目前登入的帳號簽發 refresh token（設定 PIN 快速切換時呼叫） */
+  @Post('refresh-token')
+  @UseGuards(JwtAuthGuard)
+  async refreshToken(@CurrentUser() user: AuthenticatedUser) {
+    return { refreshToken: await this.authService.issueRefreshToken(user.id) };
   }
 
   /** 給前端在 token 還沒過期前快速確認「我現在是誰」；storeFeatures 即時從 DB 查（不存在 JWT 裡） */

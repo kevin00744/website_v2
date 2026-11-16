@@ -129,8 +129,8 @@ export class StoresService {
     const existingUsername = await this.prisma.user.findFirst({ where: { username: usernameTrimmed, deletedAt: null } });
     if (existingUsername) throw new AppError('USER_USERNAME_EXISTS', '這個帳號名稱已被使用', 409);
 
-    if (!input.password || input.password.length < 8) {
-      throw new AppError('USER_PASSWORD_TOO_SHORT', '密碼至少要 8 個字元', 400);
+    if (!input.password || input.password.length < 4) {
+      throw new AppError('USER_PASSWORD_TOO_SHORT', '密碼至少要 4 個字元', 400);
     }
 
     const passwordHash = await bcrypt.hash(input.password, 10);
@@ -162,7 +162,7 @@ export class StoresService {
 
     let passwordHash: string | undefined;
     if (input.password) {
-      if (input.password.length < 8) throw new AppError('USER_PASSWORD_TOO_SHORT', '密碼至少要 8 個字元', 400);
+      if (input.password.length < 4) throw new AppError('USER_PASSWORD_TOO_SHORT', '密碼至少要 4 個字元', 400);
       passwordHash = await bcrypt.hash(input.password, 10);
     }
 

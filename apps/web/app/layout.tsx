@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: '璨妍分店管理系統',
+  title: '璨妍管理系統',
   description: '璨妍生技 ERP 後台',
   manifest: '/manifest.json',
   appleWebApp: {
