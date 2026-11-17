@@ -150,24 +150,43 @@ export interface CustomerCourseItem {
   createdAt: string;
 }
 
-export function getExosomeConsentPdfPath(customerId: number): string {
-  return `/customers/${customerId}/exosome-consent`;
-}
-
-/** 外泌體補簽同意書 */
-export function signExosomeConsent(
-  customerId: number,
-  input: { signatureUrl: string; signaturePoints?: { x: number; y: number }[]; notes?: string },
-): Promise<{ success: boolean; signedAt: string }> {
-  return apiRequest(`/customers/${customerId}/exosome-consent`, { method: 'POST', json: input });
-}
-
 /** 退課程轉儲值金 */
 export function refundCourseToCredit(
   courseId: number,
-  input: { refundedSessions: number; calculatedAmount: number; finalAmount: number; remark?: string },
-): Promise<{ success: boolean; refundedSessions: number; finalAmount: number; newStoreCredit: string }> {
+  input: { refundedSessions: number; calculatedAmount: number; finalAmount: number; adjustNote?: string },
+): Promise<{ success: boolean; transactionId: number; refundedSessions: number; finalAmount: number; walletBalance: number; walletBonusBalance: number }> {
   return apiRequest(`/customer-courses/${courseId}/refund-to-credit`, { method: 'POST', json: input });
+}
+
+export interface CourseRefundQuote {
+  courseId: number;
+  serviceItem: { id: number; name: string; price: number };
+  totalSessions: number;
+  usedSessions: number;
+  remaining: number;
+  /** 預設單堂價（可在畫面上修改） */
+  unitPrice: number;
+  /** 單堂價怎麼算的，例如「購買實收 $9,000 ÷ 12 堂」 */
+  basis: string;
+}
+
+/** 退費試算：剩餘堂數、單堂價與計算依據 */
+export function getCourseRefundQuote(courseId: number): Promise<CourseRefundQuote> {
+  return apiRequest<CourseRefundQuote>(`/customer-courses/${courseId}/refund-quote`);
+}
+
+/** 課程退費（現金 / 轉帳 / LINE Pay / 信用卡） */
+export function refundCourseCash(
+  courseId: number,
+  input: {
+    refundedSessions: number;
+    calculatedAmount: number;
+    finalAmount: number;
+    paymentMethod: 'cash' | 'transfer' | 'line_pay' | 'credit_card';
+    adjustNote?: string;
+  },
+): Promise<{ success: boolean; transactionId: number; refundedSessions: number; finalAmount: number }> {
+  return apiRequest(`/customer-courses/${courseId}/refund`, { method: 'POST', json: input });
 }
 
 /** 課程轉換 */

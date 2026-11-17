@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AppError } from '../common/errors/app-error';
 import { isAdminRole } from '../auth/role-access.util';
 import type { AuthenticatedUser } from '../auth/types';
+import { createLedgerEntry, planChanged, type PlanSnapshot } from '../customer-transactions/transaction-ledger';
 
 export interface PlanItemInput {
   serviceItemId: number;
@@ -24,6 +25,14 @@ export interface PurchasePromotionPlanInput {
   customerId: number;
   staffId?: number;
   paymentMethod: PaymentMethod;
+  /** 結帳時調整後的實收金額（不填 = 方案價格） */
+  price?: number;
+  /** 儲值優惠：調整後的贈送金額（不填 = 方案設定） */
+  bonusAmount?: number;
+  /** 課程套組：調整後各品項的堂數（只能是方案內的品項；不填 = 方案設定） */
+  items?: PlanItemInput[];
+  /** 調整備註（選填），例如「9 折」「加贈 2 堂」 */
+  adjustNote?: string;
 }
 
 const PLAN_SELECT = {
@@ -118,36 +127,64 @@ export class PromotionPlansService {
 
     const staffId = input.staffId ?? actor.id;
 
+    // ── 原方案 vs 結帳時調整後的實際成交內容 ─────────────────────────────
+    const original: PlanSnapshot = {
+      name: plan.name,
+      type: plan.type,
+      price: plan.price,
+      bonusAmount: plan.type === 'top_up_bonus' ? (plan.bonusAmount ?? 0) : null,
+      items: plan.items.map((i) => ({ serviceItemId: i.serviceItem.id, name: i.serviceItem.name, sessions: i.sessions })),
+    };
+    const actual = this.resolveAdjustedPlan(original, input);
+
     return this.prisma.$transaction(async (tx) => {
-      // 財務帳本（永遠寫入）
-      await tx.financialRecord.create({
-        data: {
-          storeId,
-          type: 'income',
-          category: plan.type === 'top_up_bonus' ? 'top_up' : 'sales',
-          amount: plan.price,
-          paymentMethod: input.paymentMethod,
-          performedById: staffId,
-          description: `購買促銷方案「${plan.name}」（顧客 #${input.customerId}）`,
-        },
+      const ledger = await createLedgerEntry(tx, {
+        storeId,
+        customerId: input.customerId,
+        staffId,
+        operatorId: actor.id,
+        kind: 'plan_purchase',
+        amount: actual.price,
+        listAmount: original.price,
+        paymentMethod: input.paymentMethod,
+        adjustNote: input.adjustNote,
+        promotionPlanId: plan.id,
+        planOriginal: original,
+        planActual: actual,
       });
 
-      // 現金付款連動備用金
-      if (input.paymentMethod === 'cash') {
-        await tx.store.update({
-          where: { id: storeId },
-          data: { pettyCashBalance: { increment: plan.price } },
+      // 財務帳本（實收 0 元時不寫）
+      if (actual.price > 0) {
+        await tx.financialRecord.create({
+          data: {
+            storeId,
+            type: 'income',
+            category: plan.type === 'top_up_bonus' ? 'top_up' : 'sales',
+            amount: actual.price,
+            paymentMethod: input.paymentMethod,
+            performedById: staffId,
+            description: `購買促銷方案「${plan.name}」（顧客 #${input.customerId}）`,
+            transactionId: ledger.id,
+          },
         });
+        // 現金付款連動備用金
+        if (input.paymentMethod === 'cash') {
+          await tx.store.update({
+            where: { id: storeId },
+            data: { pettyCashBalance: { increment: actual.price } },
+          });
+        }
       }
 
       if (plan.type === 'top_up_bonus') {
-        // 儲值優惠：principal + bonus
+        // 儲值優惠：principal + bonus（依實際成交）
+        const bonus = actual.bonusAmount ?? 0;
         await tx.customerWallet.upsert({
           where: { customerId: input.customerId },
-          create: { customerId: input.customerId, balance: plan.price, bonusBalance: plan.bonusAmount ?? 0 },
+          create: { customerId: input.customerId, balance: actual.price, bonusBalance: bonus },
           update: {
-            balance: { increment: plan.price },
-            bonusBalance: { increment: plan.bonusAmount ?? 0 },
+            balance: { increment: actual.price },
+            bonusBalance: { increment: bonus },
           },
         });
         await tx.walletLog.create({
@@ -155,29 +192,71 @@ export class PromotionPlansService {
             customerId: input.customerId,
             storeId,
             type: 'top_up',
-            amount: plan.price,
-            bonusAmount: plan.bonusAmount ?? 0,
+            amount: actual.price,
+            bonusAmount: bonus,
             performedById: staffId,
             note: `購買促銷方案「${plan.name}」`,
+            transactionId: ledger.id,
           },
         });
       } else {
-        // course_bundle：為每個品項建立 CustomerCourse
-        for (const item of plan.items) {
+        // course_bundle：依實際成交的堂數為每個品項建立 CustomerCourse
+        for (const item of actual.items) {
           await tx.customerCourse.create({
             data: {
               customerId: input.customerId,
-              serviceItemId: item.serviceItem.id,
+              serviceItemId: item.serviceItemId,
               storeId,
               totalSessions: item.sessions,
               usedSessions: 0,
+              transactionId: ledger.id,
             },
           });
         }
       }
 
-      return { planId: plan.id, planName: plan.name, type: plan.type, price: plan.price };
+      return {
+        planId: plan.id,
+        planName: plan.name,
+        type: plan.type,
+        price: actual.price,
+        listPrice: original.price,
+        transactionId: ledger.id,
+        adjusted: actual.price !== original.price || planChanged(original, actual),
+        planOriginal: original,
+        planActual: actual,
+      };
     });
+  }
+
+  /** 結帳時的調整：金額 ≥ 0；贈送金額 ≥ 0；堂數只能調整方案內的品項，每項 ≥ 1 */
+  private resolveAdjustedPlan(original: PlanSnapshot, input: PurchasePromotionPlanInput): PlanSnapshot {
+    const price = input.price ?? original.price;
+    if (!Number.isInteger(price) || price < 0) {
+      throw new AppError('PURCHASE_INVALID_PRICE', '實收金額必須為 0 以上的整數', 400);
+    }
+    let bonusAmount = original.bonusAmount ?? null;
+    if (original.type === 'top_up_bonus' && input.bonusAmount !== undefined) {
+      if (!Number.isInteger(input.bonusAmount) || input.bonusAmount < 0) {
+        throw new AppError('PURCHASE_INVALID_BONUS', '贈送金額必須為 0 以上的整數', 400);
+      }
+      bonusAmount = input.bonusAmount;
+    }
+    let items = original.items;
+    if (original.type === 'course_bundle' && input.items !== undefined) {
+      if (input.items.length === 0) throw new AppError('PURCHASE_INVALID_SESSIONS', '至少要保留一個品項', 400);
+      items = input.items.map((i) => {
+        const base = original.items.find((o) => o.serviceItemId === i.serviceItemId);
+        if (!base) throw new AppError('PURCHASE_ITEM_NOT_IN_PLAN', '只能調整方案內的品項', 400);
+        if (!Number.isInteger(i.sessions) || i.sessions < 1 || i.sessions > 999) {
+          throw new AppError('PURCHASE_INVALID_SESSIONS', '每個品項的堂數必須為 1 以上的整數', 400);
+        }
+        return { ...base, sessions: i.sessions };
+      });
+      const ids = new Set(items.map((i) => i.serviceItemId));
+      if (ids.size !== items.length) throw new AppError('PURCHASE_INVALID_SESSIONS', '品項重複', 400);
+    }
+    return { ...original, price, bonusAmount, items };
   }
 
   async update(

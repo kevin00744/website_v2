@@ -102,6 +102,7 @@ export const config = {
     '/admin',
     '/customers/:path*',
     '/calendar/:path*',
+    '/consent-templates/:path*',
     '/inventory/:path*',
     '/stores/:path*',
     '/products/:path*',

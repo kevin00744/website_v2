@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError } from '@/lib/api-client';
 import { getAuthUser, type AuthUser } from '@/lib/auth';
 import {
@@ -28,6 +28,35 @@ import { CenteredModal } from '../kiosk/CenteredModal';
 import { KioskButton } from '../kiosk/KioskButton';
 import { KioskSelect } from '../kiosk/KioskSelect';
 import { InlineSignaturePad } from './InlineSignaturePad';
+import { AdjustQuickPicks } from './AdjustQuickPicks';
+
+/** 套裝方案堂數 ± 步進器（觸控友善） */
+function Stepper({ value, min, onChange, suffix }: { value: number; min: number; onChange: (v: number) => void; suffix: string }) {
+  return (
+    <div className="flex shrink-0 items-center gap-2">
+      <button
+        type="button"
+        aria-label="減少"
+        disabled={value <= min}
+        onClick={() => onChange(Math.max(min, value - 1))}
+        className="flex h-12 w-12 items-center justify-center rounded-xl border-2 border-slate-300 text-2xl font-bold text-slate-700 disabled:opacity-30"
+      >
+        −
+      </button>
+      <span className="w-16 text-center text-xl font-bold tabular-nums text-slate-900">
+        {value} <span className="text-sm font-semibold text-slate-500">{suffix}</span>
+      </span>
+      <button
+        type="button"
+        aria-label="增加"
+        onClick={() => onChange(Math.min(999, value + 1))}
+        className="flex h-12 w-12 items-center justify-center rounded-xl border-2 border-kiosk-primary bg-kiosk-primary/5 text-2xl font-bold text-kiosk-primary"
+      >
+        ＋
+      </button>
+    </div>
+  );
+}
 
 interface POSCheckoutModalProps {
   open: boolean;
@@ -36,7 +65,6 @@ interface POSCheckoutModalProps {
   customerName: string;
   isExosomeUser: boolean;
   disclaimerFullySigned: boolean;
-  exosomeConsentSignatureUrl: string | null;
   onClose: () => void;
   onCompleted: () => void;
 }
@@ -65,7 +93,6 @@ export function POSCheckoutModal({
   customerName,
   isExosomeUser,
   disclaimerFullySigned,
-  exosomeConsentSignatureUrl,
   onClose,
   onCompleted,
 }: POSCheckoutModalProps) {
@@ -100,19 +127,22 @@ export function POSCheckoutModal({
   const [sessionsDeducted, setSessionsDeducted] = useState('1');
   /** 多重支付：每筆 { method, amount } */
   const [splitPayments, setSplitPayments] = useState<{ method: PaymentMethod; amount: string }[]>([{ method: 'cash', amount: '' }]);
-  // 折扣（single_purchase 限定）
-  const [discountType, setDiscountType] = useState<'amount' | 'percent'>('amount');
-  const [discountValue, setDiscountValue] = useState('');
+  // 結帳時調整（單次消費 / 扣儲值：只能改金額；套裝方案：金額 + 堂數 / 贈送金額）
+  const [adjustedAmount, setAdjustedAmount] = useState(0);
+  const [adjustNote, setAdjustNote] = useState('');
   // Step 2 付款（套裝方案模式）
   const [planPaymentMethod, setPlanPaymentMethod] = useState<PaymentMethod>('cash');
+  const [planBonus, setPlanBonus] = useState(0);
+  /** 套裝方案各品項調整後的堂數（key = serviceItemId） */
+  const [planSessions, setPlanSessions] = useState<Record<number, number>>({});
   const [step2Error, setStep2Error] = useState<string>();
 
-  const [successSummary, setSuccessSummary] = useState<{ itemName: string; staffName: string; amount: string }>();
+  const [successSummary, setSuccessSummary] = useState<{ itemName: string; staffName: string; amount: string; adjustNote?: string }>();
   const successTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
   const needsSignature = purchaseMode === 'service' && (consumptionType === 'wallet_deduction' || consumptionType === 'course_deduction');
-  // 外泌體使用者需完成「免責聲明雙方簽署」或「外泌體補簽同意書」其中一項才能結帳
-  const exosomeBlocked = isExosomeUser && !disclaimerFullySigned && !exosomeConsentSignatureUrl;
+  // 外泌體顧客必須先完成同意書雙方簽署才能結帳（同意書已統一成一份）
+  const exosomeBlocked = isExosomeUser && !disclaimerFullySigned;
 
   const selectedItem = serviceItems?.find((i) => String(i.id) === selectedItemId);
   const selectedPlan = promotionPlans?.find((p) => String(p.id) === selectedPlanId);
@@ -129,9 +159,11 @@ export function POSCheckoutModal({
       setSelectedStaffId('');
       setConsumptionType('single_purchase');
       setSplitPayments([{ method: 'cash', amount: '' }]);
-      setDiscountType('amount');
-      setDiscountValue('');
+      setAdjustedAmount(0);
+      setAdjustNote('');
       setPlanPaymentMethod('cash');
+      setPlanBonus(0);
+      setPlanSessions({});
       setSessionsDeducted('1');
       setSelectedCourseId('');
       setCustomerCourses(undefined);
@@ -177,8 +209,39 @@ export function POSCheckoutModal({
     if (purchaseMode === 'promotion' && !selectedPlanId) { setStep1Error('請選擇促銷方案'); return; }
     // top_up 直接跳 payment（不需要選服務項目）
     setStep1Error(undefined);
+    // 進入付款步驟時，調整欄位一律從原價 / 原方案開始
+    resetAdjustments();
     setStep('payment');
   }
+
+  function resetAdjustments() {
+    setAdjustNote('');
+    if (purchaseMode === 'promotion' && selectedPlan) {
+      setAdjustedAmount(selectedPlan.price);
+      setPlanBonus(selectedPlan.bonusAmount ?? 0);
+      setPlanSessions(Object.fromEntries(selectedPlan.items.map((i) => [i.serviceItem.id, i.sessions])));
+    } else {
+      setAdjustedAmount(selectedItem?.price ?? 0);
+    }
+  }
+
+  /** 套裝方案：和原方案的差異（自動帶入備註，例如「臉部保養 10→12 堂」） */
+  const planDiffTokens = (() => {
+    if (purchaseMode !== 'promotion' || !selectedPlan) return [] as string[];
+    const tokens: string[] = [];
+    if (selectedPlan.type === 'course_bundle') {
+      for (const i of selectedPlan.items) {
+        const now = planSessions[i.serviceItem.id] ?? i.sessions;
+        if (now !== i.sessions) tokens.push(`${i.serviceItem.name} ${i.sessions}→${now} 堂`);
+      }
+    } else if (planBonus !== (selectedPlan.bonusAmount ?? 0)) {
+      tokens.push(`贈送 $${(selectedPlan.bonusAmount ?? 0).toLocaleString()}→$${planBonus.toLocaleString()}`);
+    }
+    return tokens;
+  })();
+  const planTokensKey = planDiffTokens.join('|');
+  // useMemo 讓 AdjustQuickPicks 的 autoTokens 參考穩定，避免每次 render 重算備註
+  const stablePlanTokens = useMemo(() => planDiffTokens, [planTokensKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 按 serviceItemId 合併同一服務品項的多張課程（A+B 套裝各含相同品項時顯示合計）
   const mergedCourses = customerCourses
@@ -203,7 +266,8 @@ export function POSCheckoutModal({
   async function handleConsumptionTypeChange(ct: ConsumptionType) {
     setConsumptionType(ct);
     setSplitPayments([{ method: 'cash', amount: '' }]);
-    setDiscountValue('');
+    setAdjustedAmount(selectedItem?.price ?? 0);
+    setAdjustNote('');
     setSelectedCourseId('');
     setStep2Error(undefined);
     if (ct === 'course_deduction' && !customerCourses) {
@@ -213,14 +277,8 @@ export function POSCheckoutModal({
 
   // 多重支付輔助
   const itemPrice = selectedItem?.price ?? 0;
-  const discountAmount = (() => {
-    const v = Number(discountValue) || 0;
-    if (discountType === 'amount') return Math.min(v, itemPrice);
-    // 折數：例如 9 = 9折 = 90% → discount = 10%
-    if (v > 0 && v <= 10) return Math.round(itemPrice * (1 - v / 10));
-    return 0;
-  })();
-  const effectivePrice = Math.max(0, itemPrice - discountAmount);
+  /** 單次消費應付 / 扣儲值實扣：結帳時調整後的金額 */
+  const effectivePrice = Math.max(0, adjustedAmount);
   const splitTotal = splitPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
   const splitRemaining = effectivePrice - splitTotal;
 
@@ -252,18 +310,24 @@ export function POSCheckoutModal({
     }
 
     if (consumptionType === 'single_purchase') {
-      // 驗證：多重支付總和必須等於折後金額
-      if (splitPayments.some((p) => !p.amount || Number(p.amount) <= 0)) {
-        setStep2Error('每筆付款金額必須填寫'); return;
-      }
-      if (splitTotal !== effectivePrice) {
-        setStep2Error(`付款總和 $${splitTotal} 與應付金額 $${effectivePrice} 不符，請調整`); return;
+      // 實收 0 元（全額折抵）不需要付款方式
+      if (effectivePrice > 0) {
+        // 驗證：多重支付總和必須等於調整後的應付金額
+        if (splitPayments.some((p) => !p.amount || Number(p.amount) <= 0)) {
+          setStep2Error('每筆付款金額必須填寫'); return;
+        }
+        if (splitTotal !== effectivePrice) {
+          setStep2Error(`付款總和 $${splitTotal} 與應付金額 $${effectivePrice} 不符，請調整`); return;
+        }
       }
       void handleServiceCheckout();
       return;
     }
     if (consumptionType === 'wallet_deduction') {
-      // wallet_deduction 不需要 amountPaid 輸入；服務金額由 serviceItem.price 決定
+      if (effectivePrice <= 0) { setStep2Error('扣款金額必須大於 0'); return; }
+      if (walletInfo && effectivePrice > walletInfo.total) {
+        setStep2Error(`儲值金餘額不足（剩 $${walletInfo.total.toLocaleString()}）`); return;
+      }
     }
     if (consumptionType === 'course_deduction') {
       if (!selectedCourseId) { setStep2Error('請選擇要扣除的課程'); return; }
@@ -305,21 +369,32 @@ export function POSCheckoutModal({
     setSubmitError(undefined);
     setSubmitting(true);
     try {
+      const isBundle = selectedPlan.type === 'course_bundle';
+      const items = selectedPlan.items.map((i) => ({
+        serviceItemId: i.serviceItem.id,
+        sessions: planSessions[i.serviceItem.id] ?? i.sessions,
+      }));
       await purchasePromotionPlan(storeId, selectedPlan.id, {
         customerId,
         staffId: selectedStaffId ? Number(selectedStaffId) : undefined,
         paymentMethod: planPaymentMethod,
+        price: adjustedAmount,
+        ...(isBundle ? { items } : { bonusAmount: planBonus }),
+        adjustNote: adjustNote || undefined,
       });
 
-      const summaryLine =
-        selectedPlan.type === 'top_up_bonus'
-          ? `儲值 $${selectedPlan.price.toLocaleString()} 元，贈 $${selectedPlan.bonusAmount ?? 0} 元`
-          : `派發 ${selectedPlan.items.map((i) => `${i.serviceItem.name}×${i.sessions}`).join('、')}`;
+      const summaryLine = !isBundle
+        ? `儲值 $${adjustedAmount.toLocaleString()} 元，贈 $${planBonus.toLocaleString()} 元`
+        : `派發 ${selectedPlan.items.map((i) => `${i.serviceItem.name}×${planSessions[i.serviceItem.id] ?? i.sessions}`).join('、')}`;
+      const priceNote = adjustedAmount !== selectedPlan.price
+        ? `原價 $${selectedPlan.price.toLocaleString()} → 實收 $${adjustedAmount.toLocaleString()}`
+        : `$${adjustedAmount.toLocaleString()} 元`;
 
       setSuccessSummary({
         itemName: selectedPlan.name,
         staffName: selectedStaffMember?.name ?? '（服務人員）',
-        amount: summaryLine,
+        amount: `${summaryLine}｜${priceNote}`,
+        adjustNote: adjustNote || undefined,
       });
       setStep('success');
       successTimerRef.current = setTimeout(onCompleted, 2500);
@@ -348,29 +423,37 @@ export function POSCheckoutModal({
         staffId: selectedStaffId ? Number(selectedStaffId) : undefined,
         serviceItemId,
         consumptionType,
-        // single_purchase: 金額＝折後金額，多重支付陣列
-        amountPaid: consumptionType === 'single_purchase' ? effectivePrice : undefined,
+        // single_purchase / wallet_deduction：金額＝結帳時調整後的金額
+        amountPaid: consumptionType === 'course_deduction' ? undefined : effectivePrice,
         payments: consumptionType === 'single_purchase'
-          ? splitPayments.map((p) => ({ method: p.method as PaymentMethod, amount: Number(p.amount) }))
+          ? (effectivePrice > 0 ? splitPayments.map((p) => ({ method: p.method as PaymentMethod, amount: Number(p.amount) })) : [])
           : undefined,
         sessionsDeducted: consumptionType === 'course_deduction' ? Number(sessionsDeducted) : undefined,
         // 不傳 customerCourseId：後端依 serviceItemId 找最舊有剩餘堂數的課程
         customerSignatureUrl,
+        adjustNote: consumptionType !== 'course_deduction' && adjustNote ? adjustNote : undefined,
       });
 
       const deductedCourse = selectedMergedCourse;
-      const paymentSummary = splitPayments.length === 1
-        ? `$${effectivePrice.toLocaleString()} 元（${PAYMENT_METHOD_LABELS[splitPayments[0].method]}）`
-        : splitPayments.map((p) => `${PAYMENT_METHOD_LABELS[p.method as PaymentMethod]} $${Number(p.amount).toLocaleString()}`).join(' ＋ ');
+      const paymentSummary = consumptionType === 'wallet_deduction'
+        ? `扣儲值 $${effectivePrice.toLocaleString()} 元`
+        : effectivePrice === 0
+          ? '$0 元（全額折抵）'
+          : splitPayments.length === 1
+            ? `$${effectivePrice.toLocaleString()} 元（${PAYMENT_METHOD_LABELS[splitPayments[0].method]}）`
+            : splitPayments.map((p) => `${PAYMENT_METHOD_LABELS[p.method as PaymentMethod]} $${Number(p.amount).toLocaleString()}`).join(' ＋ ');
       const amountDisplay =
         consumptionType === 'course_deduction'
           ? `${deductedCourse?.serviceItem.name ?? '課程'} 扣 ${sessionsDeducted} 堂（剩 ${(deductedCourse?.remainingSessions ?? 0) - Number(sessionsDeducted)} 堂）`
-          : paymentSummary;
+          : effectivePrice !== itemPrice
+            ? `${paymentSummary}｜原價 $${itemPrice.toLocaleString()}`
+            : paymentSummary;
 
       setSuccessSummary({
         itemName: consumptionType === 'course_deduction' ? (deductedCourse?.serviceItem.name ?? '（課程）') : (selectedItem?.name ?? '（項目）'),
         staffName: selectedStaffMember?.name ?? '（服務人員）',
         amount: amountDisplay,
+        adjustNote: consumptionType !== 'course_deduction' && adjustNote ? adjustNote : undefined,
       });
       setStep('success');
       successTimerRef.current = setTimeout(onCompleted, 2500);
@@ -424,10 +507,10 @@ export function POSCheckoutModal({
             {exosomeBlocked && (
               <div className="rounded-kiosk border-2 border-amber-400 bg-amber-50 p-4">
                 <p className="text-kiosk-base font-semibold text-amber-800">
-                  ⚠️ 此顧客已標記為外泌體使用者，但尚未完成外泌體同意書簽署。
+                  ⚠️ 此顧客已標記為外泌體使用者，但尚未完成同意書簽署。
                 </p>
                 <p className="mt-1 text-sm text-amber-700">
-                  請先至顧客基本資料頁補齊身分證字號及外泌體同意書簽名，再進行結帳。
+                  請先至顧客基本資料頁補齊身分證字號，並完成同意書雙方簽名，再進行結帳。
                 </p>
               </div>
             )}
@@ -550,7 +633,7 @@ export function POSCheckoutModal({
                 onClick={handleStep1Next}
                 disabled={exosomeBlocked || (!serviceItems && !promotionPlans)}
               >
-                {exosomeBlocked ? '需先完成外泌體聲明書' : '下一步 →'}
+                {exosomeBlocked ? '需先完成同意書簽署' : '下一步 →'}
               </KioskButton>
             </div>
           </>
@@ -616,52 +699,17 @@ export function POSCheckoutModal({
                 />
                 {consumptionType === 'single_purchase' && (
                   <div className="flex flex-col gap-3">
-                    {/* 品項定價 + 折扣輸入 */}
-                    <div className="rounded-kiosk border-2 border-kiosk-primary/30 bg-kiosk-primary/5 px-4 py-3">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm text-slate-500">品項定價</p>
-                        <p className="text-xl font-bold text-slate-700">${itemPrice.toLocaleString()}</p>
-                      </div>
-                      {/* 折扣欄位 */}
-                      <div className="mt-3 flex items-center gap-2">
-                        <div className="flex rounded-kiosk border border-slate-300 overflow-hidden text-sm font-semibold">
-                          <button
-                            type="button"
-                            onClick={() => { setDiscountType('amount'); setDiscountValue(''); }}
-                            className={`px-3 py-1.5 transition-colors ${discountType === 'amount' ? 'bg-kiosk-primary text-white' : 'bg-white text-slate-600'}`}
-                          >
-                            扣除金額
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => { setDiscountType('percent'); setDiscountValue(''); }}
-                            className={`px-3 py-1.5 transition-colors ${discountType === 'percent' ? 'bg-kiosk-primary text-white' : 'bg-white text-slate-600'}`}
-                          >
-                            折數
-                          </button>
-                        </div>
-                        <input
-                          type="number"
-                          min={0}
-                          max={discountType === 'percent' ? 10 : itemPrice}
-                          step={discountType === 'percent' ? 0.1 : 1}
-                          value={discountValue}
-                          onChange={(e) => setDiscountValue(e.target.value)}
-                          placeholder={discountType === 'amount' ? '0' : '10'}
-                          className="w-24 rounded-kiosk border-2 border-slate-300 px-3 py-1.5 text-kiosk-base outline-none focus:border-kiosk-primary"
-                        />
-                        <span className="text-sm text-slate-500">{discountType === 'amount' ? '元' : '折（1–10）'}</span>
-                        {discountValue && <button type="button" onClick={() => setDiscountValue('')} className="text-sm text-slate-400 underline">清除</button>}
-                      </div>
-                      {discountAmount > 0 && (
-                        <p className="mt-1 text-sm text-amber-700">折扣：－${ discountAmount.toLocaleString() }</p>
-                      )}
-                      <div className="mt-2 border-t border-kiosk-primary/20 pt-2 text-center">
-                        <p className="text-sm text-slate-500">應付金額</p>
-                        <p className="text-3xl font-bold text-kiosk-primary">${effectivePrice.toLocaleString()}</p>
-                      </div>
-                    </div>
+                    {/* 原價 + 調整（快速選單：打折 / 折價券 / 折抵），只能改金額 */}
+                    <AdjustQuickPicks
+                      listPrice={itemPrice}
+                      amount={adjustedAmount}
+                      onAmountChange={setAdjustedAmount}
+                      onNoteChange={setAdjustNote}
+                      amountLabel="應付金額"
+                      resetKey={`single-${selectedItemId}`}
+                    />
 
+                    {effectivePrice > 0 && (<>
                     {/* 多重支付列表 */}
                     <label className="text-kiosk-base font-bold text-slate-800">付款方式 *</label>
                     {splitPayments.map((pay, idx) => (
@@ -711,13 +759,22 @@ export function POSCheckoutModal({
                         ＋ 新增另一種付款方式（差額 ${splitRemaining.toLocaleString()}）
                       </button>
                     )}
+                    </>)}
                   </div>
                 )}
                 {consumptionType === 'wallet_deduction' && (
-                  <div className="rounded-kiosk border border-blue-200 bg-blue-50 px-4 py-3">
-                    <p className="text-sm font-semibold text-blue-700">扣款金額（按品項定價）</p>
-                    <p className="text-2xl font-bold text-blue-800">${itemPrice.toLocaleString()}</p>
-                    <p className="mt-1 text-sm text-slate-500">本金餘額不足時自動扣抵贈送金</p>
+                  <div className="flex flex-col gap-2">
+                    <AdjustQuickPicks
+                      listPrice={itemPrice}
+                      amount={adjustedAmount}
+                      onAmountChange={setAdjustedAmount}
+                      onNoteChange={setAdjustNote}
+                      amountLabel="實扣儲值金"
+                      resetKey={`wallet-${selectedItemId}`}
+                    />
+                    <p className="text-sm text-slate-600">
+                      儲值金餘額 ${walletInfo?.total.toLocaleString() ?? '—'}（本金不足時自動扣抵贈送金）
+                    </p>
                   </div>
                 )}
                 {consumptionType === 'course_deduction' && (
@@ -778,24 +835,62 @@ export function POSCheckoutModal({
               </>
             )}
 
-            {/* 套裝方案模式只選付款方式（價格固定） */}
-            {purchaseMode === 'promotion' && (
+            {/* 套裝方案：可調整堂數 / 贈送金額與實收金額 */}
+            {purchaseMode === 'promotion' && selectedPlan && (
               <>
-                <div className="rounded-kiosk border border-slate-200 bg-slate-50 p-3">
-                  <p className="text-sm text-slate-500 mb-1">方案內容</p>
-                  {selectedPlan?.type === 'top_up_bonus' && (
-                    <p className="text-kiosk-base text-slate-700">
-                      儲值 ${selectedPlan.price.toLocaleString()} 元，贈送 ${selectedPlan.bonusAmount?.toLocaleString()} 儲值金
-                    </p>
-                  )}
-                  {selectedPlan?.type === 'course_bundle' && (
-                    <ul className="text-kiosk-base text-slate-700">
-                      {selectedPlan.items.map((i) => (
-                        <li key={i.id}>・{i.serviceItem.name} × {i.sessions} 堂</li>
-                      ))}
-                    </ul>
+                <div className="flex flex-col gap-3 rounded-kiosk border border-slate-200 bg-white p-4">
+                  <p className="text-sm font-semibold text-slate-600">方案內容（可調整）</p>
+                  {selectedPlan.type === 'course_bundle' &&
+                    selectedPlan.items.map((i) => {
+                      const now = planSessions[i.serviceItem.id] ?? i.sessions;
+                      const changed = now !== i.sessions;
+                      return (
+                        <div key={i.id} className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-kiosk-base font-semibold text-slate-900">{i.serviceItem.name}</p>
+                            {changed && <p className="text-sm font-semibold text-amber-700">原 {i.sessions} 堂 → {now} 堂</p>}
+                          </div>
+                          <Stepper
+                            value={now}
+                            min={1}
+                            onChange={(v) => setPlanSessions((prev) => ({ ...prev, [i.serviceItem.id]: v }))}
+                            suffix="堂"
+                          />
+                        </div>
+                      );
+                    })}
+                  {selectedPlan.type === 'top_up_bonus' && (
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-kiosk-base font-semibold text-slate-900">贈送儲值金</p>
+                        {planBonus !== (selectedPlan.bonusAmount ?? 0) && (
+                          <p className="text-sm font-semibold text-amber-700">
+                            原 ${(selectedPlan.bonusAmount ?? 0).toLocaleString()} → ${planBonus.toLocaleString()}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg font-bold text-slate-500">$</span>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min={0}
+                          value={planBonus}
+                          onChange={(e) => setPlanBonus(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                          className="h-12 w-32 rounded-kiosk border-2 border-slate-300 px-3 text-lg font-bold outline-none focus:border-kiosk-primary"
+                        />
+                      </div>
+                    </div>
                   )}
                 </div>
+                <AdjustQuickPicks
+                  listPrice={selectedPlan.price}
+                  amount={adjustedAmount}
+                  onAmountChange={setAdjustedAmount}
+                  onNoteChange={setAdjustNote}
+                  autoTokens={stablePlanTokens}
+                  resetKey={`plan-${selectedPlanId}`}
+                />
                 <KioskSelect
                   label="支付方式" required
                   options={Object.entries(PAYMENT_METHOD_LABELS).map(([v, l]) => ({ value: v, label: l }))}
@@ -836,7 +931,7 @@ export function POSCheckoutModal({
               <p className="text-kiosk-lg font-bold text-slate-900">
                 {consumptionType === 'course_deduction'
                   ? `${mergedCourses?.find((c) => String(c.serviceItem.id) === selectedCourseId)?.serviceItem.name ?? '課程'} — 扣 ${sessionsDeducted} 堂`
-                  : `${selectedItem?.name}　$${itemPrice.toLocaleString()} 元`}
+                  : `${selectedItem?.name}　扣儲值 $${effectivePrice.toLocaleString()} 元`}
               </p>
               <p className="text-sm text-slate-500">顧客：{customerName}</p>
             </div>
@@ -860,7 +955,10 @@ export function POSCheckoutModal({
               <p className="text-kiosk-xl font-bold text-slate-900">結帳完成</p>
               <p className="mt-2 text-kiosk-base text-slate-600">{successSummary.itemName}</p>
               <p className="text-kiosk-base font-semibold text-kiosk-primary">{successSummary.amount}</p>
-              <p className="text-sm text-slate-400">服務人員：{successSummary.staffName}</p>
+              {successSummary.adjustNote && (
+                <p className="mt-1 text-sm font-semibold text-amber-700">調整備註：{successSummary.adjustNote}</p>
+              )}
+              <p className="text-sm text-slate-500">服務人員：{successSummary.staffName}</p>
             </div>
             <p className="text-sm text-slate-400">視窗即將自動關閉…</p>
             <KioskButton variant="secondary" onClick={onCompleted}>立即關閉</KioskButton>

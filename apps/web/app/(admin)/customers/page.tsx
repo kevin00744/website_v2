@@ -117,7 +117,7 @@ export default function CustomersPage() {
       <CustomerCardList customers={customers} onSelect={(customer) => setSelectedCustomerId(customer.id)} />
 
       {canCreateCustomer(user?.role) && (
-        <div className="fixed inset-x-0 bottom-0 border-t border-slate-200 bg-white p-4 md:hidden">
+        <div className="fixed inset-x-0 bottom-0 border-t border-slate-200 bg-white p-4 pb-safe md:hidden">
           <KioskButton fullWidth onClick={() => setWizardOpen(true)}>
             ＋ 新增顧客
           </KioskButton>

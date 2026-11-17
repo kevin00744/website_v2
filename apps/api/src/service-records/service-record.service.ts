@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AppError } from '../common/errors/app-error';
 import { isAdminRole } from '../auth/role-access.util';
 import type { AuthenticatedUser } from '../auth/types';
+import { createLedgerEntry, deductionsOf, effectsOf, recordEffects } from '../customer-transactions/transaction-ledger';
 
 export interface PaymentEntry {
   method: PaymentMethod;
@@ -25,6 +26,8 @@ export interface CreateServiceRecordDto {
   note?: string;
   /** course_deduction 時指定要扣的 CustomerCourse id，避免撿到已用盡的舊課程 */
   customerCourseId?: number;
+  /** 結帳時調整金額的備註（選填），例如「9 折」「折價券 −$200」 */
+  adjustNote?: string;
 }
 
 /** 服務紀錄明細（回傳給前端） */
@@ -60,28 +63,20 @@ export class ServiceRecordService {
       throw new AppError('MISSING_SIGNATURE', '儲值扣款或課程扣堂需要顧客簽名確認', 422);
     }
 
-    if (dto.consumptionType === 'single_purchase' && (!dto.amountPaid || dto.amountPaid <= 0)) {
+    // 單次消費：實付金額可以和定價不同（結帳時打折 / 折價券），差異記在交易歷程；只要求 ≥ 0 的整數
+    if (
+      dto.consumptionType === 'single_purchase' &&
+      (dto.amountPaid == null || !Number.isInteger(dto.amountPaid) || dto.amountPaid < 0)
+    ) {
       throw new AppError('SERVICE_RECORD_MISSING_AMOUNT', '單次消費需填入實付金額', 422);
     }
 
-    // 單次消費實付金額必須等於服務品項定價
-    if (dto.consumptionType === 'single_purchase' && dto.amountPaid) {
-      const item = await this.prisma.serviceItem.findUnique({ where: { id: dto.serviceItemId }, select: { price: true } });
-      if (item && dto.amountPaid !== item.price) {
-        throw new AppError(
-          'AMOUNT_PRICE_MISMATCH',
-          `實付金額 $${dto.amountPaid} 與服務品項定價 $${item.price} 不符，無法結帳`,
-          422,
-        );
-      }
-    }
-
-    if (dto.consumptionType === 'wallet_deduction' && (!dto.amountPaid || dto.amountPaid <= 0)) {
+    if (dto.consumptionType === 'wallet_deduction' && (!dto.amountPaid || !Number.isInteger(dto.amountPaid) || dto.amountPaid <= 0)) {
       throw new AppError('SERVICE_RECORD_MISSING_AMOUNT', '儲值扣款需填入扣款金額', 422);
     }
 
     // ── 驗證關聯資料存在且隸屬同一分店 ────────────────────────────────────
-    await this.validateEntities(actor, storeId, dto.customerId, staffId, dto.serviceItemId);
+    const serviceItem = await this.validateEntities(actor, storeId, dto.customerId, staffId, dto.serviceItemId);
 
     // ── Transaction：扣款 + 帳本 + ServiceRecord ────────────────────────────
     return this.prisma.$transaction(async (tx) => {
@@ -109,15 +104,33 @@ export class ServiceRecordService {
         note: dto.note ?? null,
       };
 
+      // 交易主表：扣堂不涉及金額（0），其餘記下原價（品項定價）與實收 / 實扣
+      const isCourse = dto.consumptionType === 'course_deduction';
+      const ledger = await createLedgerEntry(tx, {
+        storeId,
+        customerId: dto.customerId,
+        staffId,
+        operatorId: actor.id,
+        kind: 'service',
+        amount: isCourse ? 0 : dto.amountPaid!,
+        listAmount: isCourse ? 0 : serviceItem.price,
+        paymentMethod: normalizedPayments?.length === 1 ? normalizedPayments[0].method : null,
+        payments: normalizedPayments,
+        adjustNote: isCourse ? null : dto.adjustNote,
+        note: dto.note,
+      });
+
       switch (dto.consumptionType) {
         case 'wallet_deduction':
-          await this.handleWalletDeduction(tx, storeId, dto.customerId, dto.amountPaid!, actor.id);
+          await this.handleWalletDeduction(tx, storeId, dto.customerId, dto.amountPaid!, actor.id, ledger.id);
           // 儲值扣款不自動寫 FinancialRecord（儲值金已在儲值時記為 income）
           break;
 
-        case 'course_deduction':
-          await this.handleCourseDeduction(tx, dto.customerId, dto.serviceItemId, sessionsToDeduct, dto.customerCourseId);
+        case 'course_deduction': {
+          const deductions = await this.handleCourseDeduction(tx, dto.customerId, dto.serviceItemId, sessionsToDeduct, dto.customerCourseId);
+          await recordEffects(tx, ledger.id, { courseDeductions: deductions });
           break;
+        }
 
         case 'single_purchase': {
           const payments = normalizedPayments ?? [];
@@ -142,6 +155,7 @@ export class ServiceRecordService {
                 paymentMethod: payment.method,
                 performedById: actor.id,
                 description: `POS 收款（服務項目 #${dto.serviceItemId}，顧客 #${dto.customerId}）`,
+                transactionId: ledger.id,
               },
             });
             if (payment.method === 'cash') cashTotal += payment.amount;
@@ -164,6 +178,7 @@ export class ServiceRecordService {
           serviceItem: { select: { id: true, name: true, price: true } },
         },
       });
+      await tx.customerTransaction.update({ where: { id: ledger.id }, data: { serviceRecordId: record.id } });
 
       return this.toDto(record);
     });
@@ -206,7 +221,8 @@ export class ServiceRecordService {
     const toDate = to ? new Date(to) : new Date();
 
     const records = await this.prisma.serviceRecord.findMany({
-      where: { storeId, staffId, createdAt: { gte: fromDate, lte: toDate } },
+      // 已還原 / 已刪除的結帳不列入業績
+      where: { storeId, staffId, isRolledBack: false, createdAt: { gte: fromDate, lte: toDate } },
       include: {
         customer: { select: { id: true, name: true } },
         staff: { select: { id: true, name: true } },
@@ -226,7 +242,7 @@ export class ServiceRecordService {
     todayStart.setHours(0, 0, 0, 0);
 
     const records = await this.prisma.serviceRecord.findMany({
-      where: { storeId, createdAt: { gte: todayStart } },
+      where: { storeId, isRolledBack: false, createdAt: { gte: todayStart } },
       include: {
         customer: { select: { id: true, name: true } },
         staff: { select: { id: true, name: true } },
@@ -246,6 +262,7 @@ export class ServiceRecordService {
     customerId: number,
     amount: number,
     performedById: number,
+    transactionId: number,
   ) {
     const wallet = await tx.customerWallet.findUnique({ where: { customerId } });
     if (!wallet) throw new AppError('WALLET_NOT_FOUND', '找不到顧客的儲值錢包', 404);
@@ -286,6 +303,7 @@ export class ServiceRecordService {
           bonusAmount: bonusDeduct,
           performedById,
           note: 'POS 消費扣款',
+          transactionId,
         },
       }),
     ]);
@@ -297,43 +315,44 @@ export class ServiceRecordService {
     serviceItemId: number,
     sessions: number,
     customerCourseId?: number,
-  ) {
-    // 若前端指定了 courseId，直接用它（避免撿到已用盡的舊課程）；
-    // 否則 fallback：依 serviceItemId 找，跳過已用盡的，取最舊的有效課程
-    let course: { id: number; totalSessions: number; usedSessions: number } | null = null;
-
+  ): Promise<Array<{ customerCourseId: number; sessions: number }>> {
+    // 指定了 courseId：只扣那一份。否則「先買先用」：同品項的課程依購買時間由舊到新，
+    // 舊的扣完不足的部分自動接續扣下一份（例：舊的剩 1、一次扣 3 → 舊的扣 1、新的扣 2）。
+    let courses: Array<{ id: number; totalSessions: number; usedSessions: number }>;
     if (customerCourseId) {
-      course = await tx.customerCourse.findFirst({
-        where: { id: customerCourseId, customerId },
+      const one = await tx.customerCourse.findFirst({
+        where: { id: customerCourseId, customerId, voidedAt: null },
       });
-      if (!course) {
-        throw new AppError('COURSE_NOT_FOUND', '找不到指定的課程紀錄', 404);
-      }
+      if (!one) throw new AppError('COURSE_NOT_FOUND', '找不到指定的課程紀錄', 404);
+      courses = [one];
     } else {
-      // 找第一張還有剩餘堂數的課程（先買先用）
-      const courses = await tx.customerCourse.findMany({
-        where: { customerId, serviceItemId },
-        orderBy: { createdAt: 'asc' },
+      courses = await tx.customerCourse.findMany({
+        where: { customerId, serviceItemId, voidedAt: null },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       });
-      course = courses.find((c) => c.totalSessions - c.usedSessions > 0) ?? null;
-      if (!course) {
-        throw new AppError('COURSE_NOT_FOUND', '找不到此顧客持有的課程', 404);
-      }
+      if (courses.length === 0) throw new AppError('COURSE_NOT_FOUND', '找不到此顧客持有的課程', 404);
     }
 
-    const remaining = course.totalSessions - course.usedSessions;
-    if (remaining < sessions) {
+    const totalRemaining = courses.reduce((s, c) => s + Math.max(0, c.totalSessions - c.usedSessions), 0);
+    if (totalRemaining < sessions) {
       throw new AppError(
         'COURSE_INSUFFICIENT',
-        `課程堂數不足（剩餘 ${remaining} 堂，需扣 ${sessions} 堂）`,
+        `課程堂數不足（剩餘 ${totalRemaining} 堂，需扣 ${sessions} 堂）`,
         422,
       );
     }
 
-    await tx.customerCourse.update({
-      where: { id: course.id },
-      data: { usedSessions: { increment: sessions } },
-    });
+    const deductions: Array<{ customerCourseId: number; sessions: number }> = [];
+    let left = sessions;
+    for (const c of courses) {
+      if (left === 0) break;
+      const take = Math.min(left, Math.max(0, c.totalSessions - c.usedSessions));
+      if (take === 0) continue;
+      await tx.customerCourse.update({ where: { id: c.id }, data: { usedSessions: { increment: take } } });
+      deductions.push({ customerCourseId: c.id, sessions: take });
+      left -= take;
+    }
+    return deductions;
   }
 
   // ─── Private: 前置驗證 ────────────────────────────────────────────────────
@@ -367,6 +386,7 @@ export class ServiceRecordService {
     if (serviceItem.storeId !== null && serviceItem.storeId !== storeId) {
       throw new AppError('STORE_MISMATCH', '此服務項目不屬於此分店', 422);
     }
+    return serviceItem;
   }
 
   private assertStoreAccess(actor: AuthenticatedUser, storeId: number) {
@@ -428,31 +448,30 @@ export class ServiceRecordService {
     }
 
     const sessionsToRestore = record.sessionsDeducted ?? 1;
-
-    const course = await this.prisma.customerCourse.findFirst({
-      where: {
-        customerId: record.customerId,
-        serviceItemId: record.serviceItemId,
-        storeId: record.storeId,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-
     const now = new Date();
-    await this.prisma.$transaction([
-      this.prisma.serviceRecord.update({
+
+    await this.prisma.$transaction(async (tx) => {
+      // 有交易歷程明細（先買先用、可能跨多份）就依明細還回原本那幾份課程
+      const ledger = await tx.customerTransaction.findUnique({ where: { serviceRecordId: recordId } });
+      const restores = ledger ? deductionsOf(await effectsOf(tx, ledger.id)) : [];
+
+      if (restores.length === 0) {
+        // 舊紀錄（沒有明細）：沿用原本做法，加回同品項最新的一份
+        const course = await tx.customerCourse.findFirst({
+          where: { customerId: record.customerId, serviceItemId: record.serviceItemId, storeId: record.storeId, voidedAt: null },
+          orderBy: { createdAt: 'desc' },
+        });
+        if (course) restores.push({ customerCourseId: course.id, sessions: sessionsToRestore });
+      }
+
+      await tx.serviceRecord.update({
         where: { id: recordId },
         data: { isRolledBack: true, rolledBackAt: now, rollbackOperatorId: actor.id },
-      }),
-      ...(course
-        ? [
-            this.prisma.customerCourse.update({
-              where: { id: course.id },
-              data: { usedSessions: { decrement: sessionsToRestore } },
-            }),
-          ]
-        : []),
-    ]);
+      });
+      for (const r of restores) {
+        await tx.customerCourse.update({ where: { id: r.customerCourseId }, data: { usedSessions: { decrement: r.sessions } } });
+      }
+    });
 
     return { success: true, recordId, restoredSessions: sessionsToRestore, rolledBackAt: now.toISOString() };
   }

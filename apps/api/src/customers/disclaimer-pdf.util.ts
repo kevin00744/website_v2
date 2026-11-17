@@ -15,10 +15,22 @@ const BODY_LINE_HEIGHT = 16;
 const HEADING_LINE_HEIGHT = 20;
 const SIGNATURE_BOX_WIDTH = 160;
 
+/**
+ * 版面版本：
+ * - 1：簽名欄跟一般文字行一樣高（16pt），簽名被縮得很小
+ * - 2：簽名欄保留 46pt 高、220pt 寬，簽名貼著底線放大顯示
+ * 顧客簽名時是「用服務人員簽署當下的快照重算座標，再蓋到磁碟上那份 PDF」，所以快照要記住版面版本，
+ * 舊快照（沒有 layoutVersion）一律當作 1，避免兩次簽名的座標對不齊。
+ */
+export const CURRENT_LAYOUT_VERSION = 2;
+const SIGNATURE_ROW_HEIGHT = 46;
+const SIGNATURE_BOX_WIDTH_V2 = 220;
+
 export const DISCLAIMER_FILE_NAME = 'disclaimer.pdf';
 
 export function formatDateLabel(date: Date): string {
-  return date.toLocaleDateString('zh-TW');
+  // 一律用台灣時間：伺服器是 UTC，凌晨 0–8 點簽署的日期會差一天
+  return date.toLocaleDateString('zh-TW', { timeZone: 'Asia/Taipei' });
 }
 
 const FONT_PATH = join(process.cwd(), 'assets', 'fonts', 'NotoSansTC-Regular.ttf');
@@ -90,6 +102,7 @@ function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): 
 export async function buildDisclaimerPdf(
   template: { title: string; sections: DisclaimerSection[] },
   headerData: DisclaimerHeaderData,
+  layoutVersion: number = CURRENT_LAYOUT_VERSION,
 ): Promise<BuildResult> {
   const pdfDoc = await PDFDocument.create();
   pdfDoc.registerFontkit(fontkit);
@@ -136,6 +149,22 @@ export async function buildDisclaimerPdf(
     return { x: boxX, y: lineY - 4, width: Math.min(boxWidth, PAGE_WIDTH - MARGIN - boxX) };
   }
 
+  /**
+   * 簽名列：v2 先在上方留出簽名的空間，標籤與底線畫在這一列底部，回傳「底線上方」整塊區域當簽名框；
+   * v1 沿用一般文字行（舊快照重算座標用）。
+   */
+  function drawSignatureLine(label: string): { x: number; y: number; width: number; height: number } {
+    if (layoutVersion < 2) {
+      const box = drawBlankLine(label, SIGNATURE_BOX_WIDTH);
+      return { ...box, height: BODY_LINE_HEIGHT };
+    }
+    ensureSpace(SIGNATURE_ROW_HEIGHT);
+    y -= SIGNATURE_ROW_HEIGHT - BODY_LINE_HEIGHT;
+    const box = drawBlankLine(label, SIGNATURE_BOX_WIDTH_V2);
+    // 底線在 lineY - 2；簽名框從底線往上，涵蓋為簽名預留的高度
+    return { x: box.x, y: box.y + 2, width: box.width, height: SIGNATURE_ROW_HEIGHT - 6 };
+  }
+
   // 標題
   const titleWidth = font.widthOfTextAtSize(template.title, TITLE_SIZE);
   ensureSpace(TITLE_SIZE + 16);
@@ -170,8 +199,8 @@ export async function buildDisclaimerPdf(
     }
 
     if (section.requiresSignature) {
-      const box = drawBlankLine('是，了解。客戶簽名：', SIGNATURE_BOX_WIDTH);
-      anchors.push({ page: pageIndex, role: 'customer', x: box.x, y: box.y, width: box.width, height: BODY_LINE_HEIGHT });
+      const box = drawSignatureLine('是，了解。客戶簽名：');
+      anchors.push({ page: pageIndex, role: 'customer', x: box.x, y: box.y, width: box.width, height: box.height });
       y -= 8;
     } else {
       y -= 8;
@@ -180,28 +209,28 @@ export async function buildDisclaimerPdf(
 
   // 全文結尾固定區塊：客戶最終簽名+日期、服務人員簽名+日期（永遠存在，不是可關閉的 section）
   y -= 8;
-  const customerFinalBox = drawBlankLine('客戶簽名：', SIGNATURE_BOX_WIDTH);
+  const customerFinalBox = drawSignatureLine('客戶簽名：');
   const customerFinalAnchor: SignatureAnchor = {
     page: pageIndex,
     role: 'customer',
     x: customerFinalBox.x,
     y: customerFinalBox.y,
     width: customerFinalBox.width,
-    height: BODY_LINE_HEIGHT,
+    height: customerFinalBox.height,
   };
   anchors.push(customerFinalAnchor);
   const customerDateBox = drawBlankLine('日期：', 120);
   customerFinalAnchor.dateAnchor = { x: customerDateBox.x, y: customerDateBox.y + 4 };
 
   y -= 16;
-  const staffFinalBox = drawBlankLine('服務人員簽章：', SIGNATURE_BOX_WIDTH);
+  const staffFinalBox = drawSignatureLine('服務人員簽章：');
   const staffFinalAnchor: SignatureAnchor = {
     page: pageIndex,
     role: 'staff',
     x: staffFinalBox.x,
     y: staffFinalBox.y,
     width: staffFinalBox.width,
-    height: BODY_LINE_HEIGHT,
+    height: staffFinalBox.height,
   };
   anchors.push(staffFinalAnchor);
   const staffDateBox = drawBlankLine('日期：', 120);
@@ -238,16 +267,18 @@ export async function applySignaturesToDisclaimerPdf(
     const page = pdfDoc.getPage(anchor.page);
     const signatureImage = await pdfDoc.embedPng(stamp.signaturePngBytes);
 
-    const padding = 4;
+    // 大簽名框（版面 v2）：簽名貼著底線、允許放大到 2 倍；舊的單行框維持置中、不放大
+    const tall = anchor.height > BODY_LINE_HEIGHT + 4;
+    const padding = tall ? 2 : 4;
     const innerWidth = anchor.width - padding * 2;
     const innerHeight = anchor.height - padding * 2;
-    const scale = Math.min(innerWidth / signatureImage.width, innerHeight / signatureImage.height, 1);
+    const scale = Math.min(innerWidth / signatureImage.width, innerHeight / signatureImage.height, tall ? 2 : 1);
     const width = signatureImage.width * scale;
     const height = signatureImage.height * scale;
 
     page.drawImage(signatureImage, {
       x: anchor.x + (anchor.width - width) / 2,
-      y: anchor.y + (anchor.height - height) / 2,
+      y: tall ? anchor.y + padding : anchor.y + (anchor.height - height) / 2,
       width,
       height,
     });

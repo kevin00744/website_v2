@@ -10,7 +10,6 @@ import {
   deleteCustomer,
   getCustomerDetail,
   getDisclaimerPdfPath,
-  getExosomeConsentPdfPath,
   listCustomerCourses,
   updateCustomer,
   type CustomerCourseItem,
@@ -25,6 +24,7 @@ import { ExosomeConsentModal } from './ExosomeConsentModal';
 import { TreatmentRecordTab } from './TreatmentRecordTab';
 import { NewTreatmentModal } from './NewTreatmentModal';
 import { POSCheckoutModal } from './POSCheckoutModal';
+import { TransactionsTab } from './TransactionsTab';
 import { CourseRefundModal } from './CourseRefundModal';
 import { CourseConvertModal } from './CourseConvertModal';
 import { LineBindingBadge } from '../line/LineBindingBadge';
@@ -35,7 +35,7 @@ interface CustomerDetailDrawerProps {
   onDeleted: () => void;
 }
 
-type Tab = 'profile' | 'treatments' | 'courses';
+type Tab = 'profile' | 'treatments' | 'courses' | 'transactions';
 
 /** 對齊後端 InventoryController 的 @Roles('manager')：admin/system_admin/manager 才能記錄商品使用 */
 function canConsumeInventory(role: AuthUser['role'] | undefined): boolean {
@@ -70,14 +70,13 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
   const [treatmentKey, setTreatmentKey] = useState(0);
   const [posModalOpen, setPosModalOpen] = useState(false);
   const [exosomeModalOpen, setExosomeModalOpen] = useState(false);
-  const [exosomePdfError, setExosomePdfError] = useState<string>();
   const [disclaimerPdfError, setDisclaimerPdfError] = useState<string>();
   const [user, setUser] = useState<AuthUser>();
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string>();
   const [courses, setCourses] = useState<CustomerCourseItem[]>();
   const [coursesLoading, setCoursesLoading] = useState(false);
-  const [refundCourse, setRefundCourse] = useState<CustomerCourseItem>();
+  const [refundCourse, setRefundCourse] = useState<{ course: CustomerCourseItem; mode: 'cash' | 'credit' }>();
   const [convertCourse, setConvertCourse] = useState<CustomerCourseItem>();
 
   useEffect(() => {
@@ -197,6 +196,9 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
           >
             課程管理
           </KioskButton>
+          <KioskButton variant={tab === 'transactions' ? 'primary' : 'secondary'} onClick={() => setTab('transactions')}>
+            交易紀錄
+          </KioskButton>
         </div>
         <div className="flex flex-wrap gap-2">
           {canConsumeInventory(user?.role) && (
@@ -243,52 +245,16 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
             </div>
           )}
 
-          {/* 外泌體同意書區塊：依顧客狀態顯示不同 UI */}
-          {!detail.isExosomeUser ? (
-            /* 未勾選外泌體：顯示「外泌體同意書」按鈕，取代簽署區塊 */
-            <div className="rounded-kiosk border border-slate-200 bg-slate-50 p-4">
-              <p className="text-kiosk-base font-semibold text-slate-700">外泌體同意書</p>
-              <p className="mt-1 text-sm text-slate-500">
-                若此顧客開始使用外泌體療程，請點擊下方按鈕完成雙方簽署，系統將自動標記並產生聲明書 PDF。
-              </p>
-              <div className="mt-3">
-                <KioskButton variant="secondary" onClick={() => setExosomeModalOpen(true)}>
-                  外泌體同意書（開始簽署）
-                </KioskButton>
-              </div>
-            </div>
-          ) : detail.hasExosomeConsent ? (
-            /* 外泌體補簽同意書已完成 */
+          {/* 同意書區塊（統一一份，內容來自「同意書管理」目前使用中的版本） */}
+          {detail.disclaimerFullySigned ? (
+            /* 已完成雙方簽署 → 查看 PDF */
             <div className="rounded-kiosk border border-green-200 bg-green-50 p-4">
-              <p className="text-kiosk-base font-semibold text-green-700">✓ 外泌體補簽同意書已完成</p>
-              {detail.exosomeConsentSignedAt && (
-                <p className="mt-1 text-sm text-green-600">
-                  簽署日期：{new Date(detail.exosomeConsentSignedAt).toLocaleDateString('zh-TW')}
+              <p className="text-kiosk-base font-semibold text-green-700">✓ 同意書已完成雙方簽署</p>
+              {detail.disclaimerCustomerSignedAt && (
+                <p className="mt-1 text-sm text-green-700">
+                  簽署日期：{new Date(detail.disclaimerCustomerSignedAt).toLocaleDateString('zh-TW')}
                 </p>
               )}
-              <div className="mt-3">
-                <KioskButton
-                  variant="secondary"
-                  onClick={async () => {
-                    setExosomePdfError(undefined);
-                    try {
-                      await openPdfInNewTab(getExosomeConsentPdfPath(customerId));
-                    } catch (err) {
-                      setExosomePdfError(err instanceof Error ? err.message : '開啟 PDF 失敗，請稍後再試');
-                    }
-                  }}
-                >
-                  開新視窗查看同意書 PDF
-                </KioskButton>
-              </div>
-              {exosomePdfError && (
-                <p className="mt-2 text-sm font-semibold text-kiosk-danger">⚠️ {exosomePdfError}</p>
-              )}
-            </div>
-          ) : detail.disclaimerFullySigned ? (
-            /* 已完整簽署（原始簽署流程）→ 直接顯示 PDF */
-            <div className="rounded-kiosk border border-green-200 bg-green-50 p-4">
-              <p className="text-kiosk-base font-semibold text-green-700">✓ 外泌體同意書已完成雙方簽署</p>
               <div className="mt-3">
                 <KioskButton
                   variant="secondary"
@@ -301,42 +267,49 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
                     }
                   }}
                 >
-                  開新視窗查看同意書 PDF
+                  查看同意書 PDF
                 </KioskButton>
               </div>
               {disclaimerPdfError && (
                 <p className="mt-2 text-sm font-semibold text-kiosk-danger">⚠️ {disclaimerPdfError}</p>
               )}
             </div>
-          ) : (
-            /* 外泌體使用者但未完成簽署（含服務人員已簽、顧客未簽的中間狀態） */
+          ) : detail.disclaimerStaffSignedAt ? (
+            /* 服務人員已簽、顧客未簽：引導顧客完成簽署 */
             <>
               <div className="rounded-kiosk border-2 border-amber-400 bg-amber-50 p-4">
-                <p className="text-kiosk-base font-bold text-amber-800">⚠️ 外泌體同意書尚未完成</p>
-                <p className="mt-1 text-sm text-amber-700">
-                  {detail.disclaimerStaffSignedAt
-                    ? '服務人員已簽名，請引導顧客完成下方簽署。'
-                    : '需完成服務人員與顧客雙方簽名。'}
-                </p>
-                {!detail.disclaimerStaffSignedAt && (
-                  <div className="mt-2">
-                    <KioskButton variant="secondary" onClick={() => setExosomeModalOpen(true)}>
-                      開始雙方簽署流程
-                    </KioskButton>
-                  </div>
-                )}
+                <p className="text-kiosk-base font-bold text-amber-800">⚠️ 同意書尚未完成</p>
+                <p className="mt-1 text-sm text-amber-800">服務人員已簽名，請引導顧客完成下方簽署。</p>
               </div>
-              {/* 顧客待簽（服務人員已簽）：使用現有的 DisclaimerSignSection */}
-              {detail.disclaimerStaffSignedAt && (
-                <DisclaimerSignSection
-                  customerId={customerId}
-                  disclaimerCustomerSignedAt={detail.disclaimerCustomerSignedAt}
-                  disclaimerStaffSignedAt={detail.disclaimerStaffSignedAt}
-                  disclaimerFullySigned={detail.disclaimerFullySigned}
-                  onChanged={() => void loadDetail()}
-                />
-              )}
+              <DisclaimerSignSection
+                customerId={customerId}
+                disclaimerCustomerSignedAt={detail.disclaimerCustomerSignedAt}
+                disclaimerStaffSignedAt={detail.disclaimerStaffSignedAt}
+                disclaimerFullySigned={detail.disclaimerFullySigned}
+                onChanged={() => void loadDetail()}
+              />
             </>
+          ) : (
+            /* 尚未簽署：外泌體顧客必須先簽才能結帳，其他顧客可視需要簽署 */
+            <div
+              className={`rounded-kiosk p-4 ${
+                detail.isExosomeUser ? 'border-2 border-amber-400 bg-amber-50' : 'border border-slate-200 bg-slate-50'
+              }`}
+            >
+              <p className={`text-kiosk-base font-bold ${detail.isExosomeUser ? 'text-amber-800' : 'text-slate-700'}`}>
+                {detail.isExosomeUser ? '⚠️ 同意書尚未簽署' : '同意書'}
+              </p>
+              <p className={`mt-1 text-sm ${detail.isExosomeUser ? 'text-amber-800' : 'text-slate-600'}`}>
+                {detail.isExosomeUser
+                  ? '使用外泌體療程前需完成服務人員與顧客雙方簽名，否則無法結帳。'
+                  : '若此顧客要開始使用外泌體療程，請點下方按鈕完成雙方簽署，系統會自動標記並產生同意書 PDF。'}
+              </p>
+              <div className="mt-3">
+                <KioskButton variant="secondary" onClick={() => setExosomeModalOpen(true)}>
+                  開始簽署同意書
+                </KioskButton>
+              </div>
+            </div>
           )}
 
           <form onSubmit={handleSubmit(onSubmit)} className="flex flex-1 flex-col gap-5">
@@ -450,7 +423,8 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
                         </div>
                         {canManageCourses(user?.role) && c.remainingSessions > 0 && (
                           <div className="flex gap-2 flex-wrap">
-                            <KioskButton variant="secondary" onClick={() => setRefundCourse(c)}>退課轉儲值</KioskButton>
+                            <KioskButton variant="secondary" onClick={() => setRefundCourse({ course: c, mode: 'cash' })}>退費</KioskButton>
+                            <KioskButton variant="secondary" onClick={() => setRefundCourse({ course: c, mode: 'credit' })}>退課轉儲值</KioskButton>
                             <KioskButton variant="secondary" onClick={() => setConvertCourse(c)}>課程轉換</KioskButton>
                           </div>
                         )}
@@ -462,7 +436,10 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
                 {/* 只有一張課程時直接在合計欄顯示管理按鈕 */}
                 {group.items.length === 1 && canManageCourses(user?.role) && group.remainingSessions > 0 && (
                   <div className="flex gap-2 flex-wrap">
-                    <KioskButton variant="secondary" onClick={() => setRefundCourse(group.items[0])}>
+                    <KioskButton variant="secondary" onClick={() => setRefundCourse({ course: group.items[0], mode: 'cash' })}>
+                      退費
+                    </KioskButton>
+                    <KioskButton variant="secondary" onClick={() => setRefundCourse({ course: group.items[0], mode: 'credit' })}>
                       退課轉儲值
                     </KioskButton>
                     <KioskButton variant="secondary" onClick={() => setConvertCourse(group.items[0])}>
@@ -475,6 +452,19 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
           </div>
         );
       })()}
+
+      {tab === 'transactions' && (
+        <TransactionsTab
+          customerId={customerId}
+          canDelete={user?.role === 'system_admin'}
+          refreshKey={treatmentKey}
+          onChanged={() => {
+            // 刪除回溯後，課程與儲值金都變了：重新載入顧客資料與課程
+            void loadDetail();
+            setCourses(undefined);
+          }}
+        />
+      )}
 
       <NewTreatmentModal
         open={treatmentModalOpen}
@@ -506,7 +496,6 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
           customerName={detail.name}
           isExosomeUser={detail.isExosomeUser}
           disclaimerFullySigned={detail.disclaimerFullySigned}
-          exosomeConsentSignatureUrl={detail.exosomeConsentSignatureUrl}
           onClose={() => setPosModalOpen(false)}
           onCompleted={() => {
             setPosModalOpen(false);
@@ -518,12 +507,16 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
 
       {refundCourse && (
         <CourseRefundModal
+          key={`${refundCourse.course.id}-${refundCourse.mode}`}
           open={!!refundCourse}
-          course={refundCourse}
-          onCompleted={(newStoreCredit) => {
+          course={refundCourse.course}
+          mode={refundCourse.mode}
+          onCompleted={() => {
             setRefundCourse(undefined);
-            setDetail((prev) => prev ? { ...prev, storeCredit: newStoreCredit } : prev);
+            // 堂數、儲值金、交易紀錄都變了
+            void loadDetail();
             void loadCourses();
+            setTreatmentKey((k) => k + 1);
           }}
           onClose={() => setRefundCourse(undefined)}
         />

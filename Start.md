@@ -1,312 +1,143 @@
-# 啟動 / 關閉專案（website_v2）
+# 部署與維運手冊（website_v2）
 
-> **重要**：容器重啟後，NestJS API 和 Next.js **不會自動恢復**，必須手動重新啟動行程（見下方步驟）。
+> 最後更新：2026-11-17
+> 正式站：https://www.tsanyentest.com　｜　伺服器專案位置：`/opt/website_v2`
 
----
+正式環境由 `docker-compose.prod.yml` 管理（project 名稱 `website_v2_prod`），三個容器都設定 `restart: unless-stopped`，**伺服器重開機後會自動恢復**，不需要手動啟動行程。
 
-## 一、每次開工：完整啟動流程
-
-### 步驟 1 — 啟動 Docker 容器
-
-```bash
-cd /Users/tsanyen/Documents/website/website_v2
-docker compose up -d
-```
-
-確認四個容器都正常：
-
-```bash
-docker compose ps
-```
-
-預期狀態：
-
-| 名稱 | 狀態 | Port |
+| 容器 | 角色 | 對外 |
 |------|------|------|
-| `website_v2_nginx` | Up | `80:80`, `443:443` |
-| `website_v2_web` | Up | （無對外 port，由 nginx proxy） |
-| `website_v2_api` | Up | `3101:3000` |
-| `website_v2_db`  | Up (healthy) | `5433:5432` |
+| `website_v2_prod-db-1` | PostgreSQL 16（volume `website_v2_prod_db_data`） | 不對外 |
+| `website_v2_prod-api-1` | NestJS API；啟動時先跑 `prisma migrate deploy` 再 `node dist/src/main.js` | `127.0.0.1:3101` |
+| `website_v2_prod-web-1` | Next.js（`next start apps/web`） | `127.0.0.1:3000` |
 
-> `api` 容器啟動時會跑 `apt-get install openssl procps`，約需 10–30 秒，等這步完成後再繼續。
+主機上的 nginx（`/etc/nginx/sites-enabled/website_v2`）負責 HTTPS（Let's Encrypt），把 `/api/`、`/socket.io/` 轉到 3101，其餘轉到 3000。
 
----
-
-### 步驟 2 — 確認 API dist 是否存在（首次 / 清掉後才需要）
+為了方便輸入，以下用 `COMPOSE` 代表：
 
 ```bash
-docker exec website_v2_api sh -c "ls /workspace/apps/api/dist/src/main.js 2>/dev/null && echo '✓ dist 存在' || echo '✗ dist 不存在，需要 build'"
-```
-
-如果顯示「✗ dist 不存在」：
-
-```bash
-docker exec website_v2_api sh -c "cd /workspace/apps/api && npx prisma generate && npm run build 2>&1 | tail -5"
-```
-
-> build 約需 30–60 秒。`npm run build` = `nest build`，輸出在 `dist/src/`。
-
----
-
-### 步驟 3 — 啟動 NestJS API
-
-```bash
-docker exec -d website_v2_api sh -c \
-  "cd /workspace/apps/api && node dist/src/main.js > /tmp/api.log 2>&1"
-```
-
-確認 API 就緒：
-
-```bash
-docker exec website_v2_api sh -c "tail -5 /tmp/api.log"
-# 看到 "Nest application successfully started" 表示正常
+COMPOSE="docker compose -p website_v2_prod -f /opt/website_v2/docker-compose.prod.yml"
 ```
 
 ---
 
-### 步驟 4 — 啟動 Next.js Web
+## 一、部署（改了程式碼之後）
 
 ```bash
-docker exec -d website_v2_web sh -c \
-  "cd /workspace/apps/web && PORT=3000 /workspace/node_modules/.bin/next start > /tmp/web.log 2>&1"
+bash /opt/website_v2/deploy.sh
 ```
 
-確認 Web 就緒：
+腳本會依序：
+1. 確認資料庫啟動
+2. 備份資料庫和目前版本到 `/opt/website_v2_backups/`
+3. 建置 API（`prisma generate` + `nest build`）
+4. 在獨立資料夾建置網站（正式站不中斷），**工作目錄必須是 `apps/web`**，否則 Tailwind 抓不到樣式、畫面會跑版
+5. 換上新版網站並重啟 api 和 web；API 啟動時自動套用新的資料庫 migration
+6. 檢查 API 已啟動、`/login` 回應 200；失敗時保留舊版在 `apps/web/.next.old`，並印出還原指令
+
+> `NEXT_PUBLIC_*` 變數（API 網址、LIFF ID）在網站建置時寫死，改了 `.env` 裡這些值要重新部署網站。
+
+---
+
+## 二、只重新啟動（程式沒改）
 
 ```bash
-docker exec website_v2_web sh -c "tail -5 /tmp/web.log"
-# 看到 "Ready in XXXms" 表示正常
+cd /opt/website_v2 && docker compose -p website_v2_prod -f docker-compose.prod.yml restart api web
+```
+
+整組重啟（含資料庫）：
+
+```bash
+cd /opt/website_v2 && docker compose -p website_v2_prod -f docker-compose.prod.yml up -d
 ```
 
 ---
 
-### 步驟 5 — 驗證可以開啟
+## 三、檢查狀態與看 log
 
-| 服務 | URL |
-|------|-----|
-| 後台（本機） | http://localhost/admin |
-| 後台（外網） | https://tsanyentest.com/admin |
-| API | http://localhost:3101/api/v2 |
+```bash
+docker ps --format '{{.Names}}\t{{.Status}}'
+```
+
+```bash
+docker logs --tail 50 website_v2_prod-api-1
+```
+
+```bash
+docker logs --tail 20 website_v2_prod-web-1
+```
+
+API 正常會看到 `Nest application successfully started`；網站會看到 `Ready in …ms`。
 
 ---
 
-## 二、快速一鍵啟動腳本
+## 四、資料庫
 
-> 適用於 dist 已存在的日常啟動。
-
-```bash
-cd /Users/tsanyen/Documents/website/website_v2 && docker compose up -d && \
-sleep 25 && \
-docker exec -d website_v2_api sh -c "cd /workspace/apps/api && node dist/src/main.js > /tmp/api.log 2>&1" && \
-docker exec -d website_v2_web sh -c "cd /workspace/apps/web && PORT=3000 /workspace/node_modules/.bin/next start > /tmp/web.log 2>&1" && \
-echo "啟動中，約 10 秒後可開啟 http://localhost/admin"
-```
-
-確認都就緒：
+連進資料庫：
 
 ```bash
-docker exec website_v2_api sh -c "tail -3 /tmp/api.log"
-docker exec website_v2_web sh -c "tail -3 /tmp/web.log"
+docker exec -it website_v2_prod-db-1 psql -U website_v2_user -d website_v2
 ```
+
+手動備份：
+
+```bash
+mkdir -p /opt/website_v2_backups && docker exec website_v2_prod-db-1 pg_dump -U website_v2_user -d website_v2 -Fc > /opt/website_v2_backups/db-$(date +%Y%m%d-%H%M%S).dump
+```
+
+還原（把檔名換成要還原的備份）：
+
+```bash
+docker exec -i website_v2_prod-db-1 pg_restore -U website_v2_user -d website_v2 --clean --if-exists < /opt/website_v2_backups/db-YYYYMMDD-HHMMSS.dump
+```
+
+### Migration 注意事項
+- 新的 migration 放在 `apps/api/prisma/migrations/`，部署時 API 啟動會自動套用。
+- **舊的 migration 無法在空資料庫上完整重播**（早期欄位有落差，`seed.ts` 也因此無法在空庫執行）。產生新 migration 時，請對「正式庫結構的副本」做 diff（`pg_dump --schema-only` 還原到臨時資料庫，再 `prisma migrate diff --from-url …`），並只保留這次功能的 DDL。
 
 ---
 
-## 三、首次完整啟動（含 build）
+## 五、一次性腳本（`apps/api/scripts/`）
 
-> 適用於：首次使用、重新 clone、或 `docker compose down` 後重建容器。
+在正式資料庫上執行時，用一次性的 node 容器連到 `website_v2_prod_default` 網路：
 
 ```bash
-cd /Users/tsanyen/Documents/website/website_v2 && docker compose up -d && \
-sleep 25 && \
-echo "=== 建置 API ===" && \
-docker exec website_v2_api sh -c "cd /workspace/apps/api && npx prisma generate && npm run build" && \
-echo "=== 啟動 API ===" && \
-docker exec -d website_v2_api sh -c "cd /workspace/apps/api && node dist/src/main.js > /tmp/api.log 2>&1" && \
-echo "=== 啟動 Web ===" && \
-docker exec -d website_v2_web sh -c "cd /workspace/apps/web && PORT=3000 /workspace/node_modules/.bin/next start > /tmp/web.log 2>&1" && \
-echo "啟動中，約 15 秒後可開啟 http://localhost/admin"
+cd /opt/website_v2 && docker run --rm --network website_v2_prod_default --env-file .env -v /opt/website_v2:/workspace -w /workspace/apps/api node:20-slim sh -c 'apt-get update -qq >/dev/null && apt-get install -y -qq openssl >/dev/null 2>&1; DATABASE_URL="postgresql://website_v2_user:${DB_PASSWORD}@db:5432/website_v2" ./node_modules/.bin/ts-node -T scripts/<腳本>.ts <參數>'
 ```
+
+| 腳本 | 用途 |
+|------|------|
+| `delete-transaction.ts <交易id> <系統管理員userId> "<原因>" [--yes]` | 以系統管理員身分刪除交易並回溯（預設只預覽，加 `--yes` 才執行） |
+| `backfill-disclaimer-pdfs.ts` | 依簽署當時的快照重新產生所有「已完成雙方簽署」的同意書 PDF |
+| `merge-line-duplicate-customers.ts [--apply]` | 合併 LINE 綁定產生的重複顧客（預設只預覽） |
+| `line-richmenu.ts ./richmenu.png` | 建立 LINE 圖文選單（需 LINE 相關環境變數） |
+| `fix-absolute-upload-urls.ts` | 修正舊的上傳檔絕對網址 |
+
+> 腳本會讀寫 `apps/api/storage/`（顧客 PDF、照片），在正式機上執行就是改正式資料。
 
 ---
 
-## 四、前端程式碼修改後 Build + 重啟
+## 六、環境變數（`/opt/website_v2/.env`，不進版控）
 
-```bash
-# 重新 build
-docker exec website_v2_web sh -c "cd /workspace/apps/web && npm run build"
-
-# 殺掉舊行程並重啟
-docker exec website_v2_web sh -c \
-  "find /proc -maxdepth 2 -name cmdline 2>/dev/null | while read f; do \
-    c=\$(cat \"\$f\" 2>/dev/null | tr '\0' ' '); \
-    if echo \"\$c\" | grep -q 'next-server'; then \
-      pid=\$(echo \$f | cut -d/ -f3); kill \$pid 2>/dev/null; fi; done"
-sleep 2
-docker exec -d website_v2_web sh -c \
-  "cd /workspace/apps/web && PORT=3000 /workspace/node_modules/.bin/next start > /tmp/web.log 2>&1"
-```
+| 變數 | 用途 |
+|------|------|
+| `DOMAIN` | 網域（www.tsanyentest.com） |
+| `DB_PASSWORD` | 資料庫密碼 |
+| `JWT_SECRET` | 登入 token 金鑰。**不可更改**，改了所有裝置都會被登出、PIN 帳號要重新輸入密碼 |
+| `LINE_ENABLED` | `true` 才啟用 LINE 功能 |
+| `LINE_STORE_ID` | LINE 對應的分店（24） |
+| `LINE_CHANNEL_SECRET` / `LINE_CHANNEL_ACCESS_TOKEN` | Messaging API channel |
+| `LINE_LOGIN_CHANNEL_ID` / `LINE_LIFF_ID` | LINE Login / LIFF（網站建置時寫入） |
 
 ---
 
-## 五、後端程式碼修改後 Build + 重啟
+## 七、常見問題
 
-```bash
-# 型別檢查（確保無錯誤再 build）
-docker exec website_v2_api sh -c "cd /workspace/apps/api && npx tsc --noEmit"
-
-# 重新 build
-docker exec website_v2_api sh -c "cd /workspace/apps/api && npm run build"
-
-# 殺掉舊行程並重啟
-docker exec website_v2_api sh -c \
-  "find /proc -maxdepth 2 -name cmdline 2>/dev/null | while read f; do \
-    c=\$(cat \"\$f\" 2>/dev/null | tr '\0' ' '); \
-    if echo \"\$c\" | grep -q 'dist/src/main'; then \
-      pid=\$(echo \$f | cut -d/ -f3); kill \$pid 2>/dev/null; fi; done"
-sleep 2
-docker exec -d website_v2_api sh -c \
-  "cd /workspace/apps/api && node dist/src/main.js > /tmp/api.log 2>&1"
-```
-
-> **注意**：改完 schema.prisma 後需先 `npx prisma generate` 再 `npm run build`。
-
----
-
-## 六、Schema 有變更（Prisma Migration）
-
-```bash
-docker exec -it website_v2_api sh
-
-# 建立並套用 migration
-npx prisma migrate dev --name <描述這次變更>
-
-# 或只套用已存在的 migration
-npx prisma migrate deploy
-
-# 重新產生 Prisma Client（schema 加新欄位後必須執行）
-npx prisma generate
-```
-
-執行完後需重新 build + 重啟 API（見步驟五）。
-
----
-
-## 七、查看即時 Log
-
-```bash
-# API log
-docker exec website_v2_api sh -c "tail -f /tmp/api.log"
-
-# Web log
-docker exec website_v2_web sh -c "tail -f /tmp/web.log"
-
-# nginx log
-docker compose logs -f nginx
-```
-
----
-
-## 八、進容器除錯
-
-```bash
-# 進入 API 容器
-docker exec -it website_v2_api sh
-
-# 進入 Web 容器
-docker exec -it website_v2_web sh
-
-# 進入 DB（psql）
-docker exec -it website_v2_db psql -U website_v2_user -d website_v2
-```
-
-常用 psql 指令：
-
-```sql
-\dt                    -- 列出所有資料表
-\d users               -- 查看 users 表欄位
-SELECT username, role, is_active FROM users WHERE deleted_at IS NULL;
-SELECT id, name, petty_cash_balance FROM stores WHERE deleted_at IS NULL;
-```
-
----
-
-## 九、帳號資訊
-
-| 帳號（username） | 角色 | 說明 |
-|----------------|------|------|
-| `kevin00744` | system_admin | 主帳號，id=1，storeId=24 |
-
-> 其他帳號從後台「帳號管理」頁面建立。
-
----
-
-## 十、型別檢查
-
-```bash
-# 後端 TypeScript 零錯誤
-docker exec website_v2_api sh -c "cd /workspace/apps/api && npx tsc --noEmit"
-
-# 前端 TypeScript 零錯誤
-docker exec website_v2_web sh -c "cd /workspace/apps/web && npx tsc --noEmit"
-```
-
----
-
-## 十一、關閉 / 重啟
-
-```bash
-# 停止所有容器（保留 dist、DB 資料）
-docker compose stop
-
-# 重新啟動容器
-docker compose up -d
-
-# 完全移除容器（保留 DB volume）
-docker compose down
-
-# 連 DB 資料一起清空（⚠️ 不可逆）
-docker compose down -v
-```
-
----
-
-## 十二、環境變數
-
-| 變數 | 設定位置 | 說明 |
-|------|----------|------|
-| `DATABASE_URL` | api 容器 env | `postgresql://website_v2_user:secret@db:5432/website_v2` |
-| `JWT_SECRET` | api 容器 env | 預設 `dev-only-insecure-secret-change-in-production` |
-| `CMS_API_INTERNAL_URL` | web 容器 env | `http://api:3000/api/v2`（SSR 用） |
-| `NEXT_PUBLIC_API_BASE_URL` | **刻意不設** | 瀏覽器端由 `resolveApiBaseUrl()` 依 `window.location.hostname:3101` 動態組出 |
-
----
-
-## 十三、常見問題診斷
-
-**Q：容器重啟後網頁打不開？**
-→ API 和 Web 程序需手動重啟。先看 log 確認：
-```bash
-docker exec website_v2_api sh -c "tail -5 /tmp/api.log"
-docker exec website_v2_web sh -c "tail -5 /tmp/web.log"
-```
-
-**Q：`api.log` 出現 `Cannot find module 'dist/src/main.js'`？**
-→ 需先 build：`docker exec website_v2_api sh -c "cd /workspace/apps/api && npx prisma generate && npm run build"`
-
-**Q：API log 出現 `The column X does not exist`？**
-→ Prisma client 和 schema 不同步，需 `npx prisma generate` 後重新 build + 重啟。
-
-**Q：DB 重建後 API 連不上 `db:5432`？**
-→ DB 容器 IP 更換導致 DNS 失效，需 `docker compose up -d --force-recreate api` 重建 API 容器。
-
-**Q：外網（手機）登入失敗？**
-→ 確認路由器有 port forwarding 80/443 → 192.168.1.103。
-
-**Q：HTTPS 顯示憑證警告？**
-→ 使用自簽憑證，點「繼續前往」即可。如需正式憑證可換 Let's Encrypt。
-
-**Q：Web 程序顯示 running 但連線失敗？**
-→ 殭屍程序問題，需 kill 後重啟（見步驟四）。
-```bash
-docker exec website_v2_web sh -c "node -e \"require('http').get('http://localhost:3000/', r => console.log(r.statusCode)).on('error',e=>console.error(e.message))\""
-```
+| 狀況 | 處理 |
+|------|------|
+| 網站畫面樣式全跑掉 | 網站建置時工作目錄不是 `apps/web`。用 `deploy.sh` 重新部署 |
+| 建置後出現 Application error | 建置完要重啟 web 容器（`deploy.sh` 會做） |
+| iPad 上方有網址列 | Safari 分享 →「加入主畫面」，之後從主畫面圖示開啟 |
+| 部署後 API 起不來 | `docker logs website_v2_prod-api-1` 看 migration 或錯誤訊息；必要時用備份還原 |
+| 硬碟快滿 | `df -h /`；可刪 `/opt/website_v2_backups/` 舊備份、`docker image prune` 清掉沒用的映像 |
+| SSL 憑證 | certbot 自動續期；手動檢查：`certbot renew --dry-run` |

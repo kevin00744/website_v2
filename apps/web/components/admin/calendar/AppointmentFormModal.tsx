@@ -15,8 +15,10 @@ import {
 import type { ServiceItemSummary } from '@/lib/service-records-api';
 import { useDebouncedValue } from '@/lib/use-debounce';
 import {
+  BUSINESS_HOURS,
   addDays,
   addMinutes,
+  defaultSlotFor,
   durationLabel,
   formatMonthDay,
   formatTime,
@@ -55,8 +57,15 @@ interface Props {
 }
 
 const DURATIONS = [30, 60, 90, 120, 150, 180];
+const toHm = (m: number) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+/** 營業時間內的開始時間（最後一個可選時段是打烊前 15 分鐘） */
 const TIME_OPTIONS: string[] = [];
-for (let m = 7 * 60; m <= 23 * 60; m += 15) TIME_OPTIONS.push(`${pad(Math.floor(m / 60))}:${pad(m % 60)}`);
+for (let m = BUSINESS_HOURS.start * 60; m < BUSINESS_HOURS.end * 60; m += 15) TIME_OPTIONS.push(toHm(m));
+/** 營業時間以外的時段，收在選單最後面（特殊預約用） */
+const OFF_HOURS_OPTIONS: string[] = [];
+for (let m = 8 * 60; m <= 23 * 60; m += 15) {
+  if (m < BUSINESS_HOURS.start * 60 || m >= BUSINESS_HOURS.end * 60) OFF_HOURS_OPTIONS.push(toHm(m));
+}
 
 type SelectedCustomer = { id: number; name: string; phone: string | null; code?: string | null };
 
@@ -465,12 +474,21 @@ export function AppointmentFormModal({ open, storeId, staff, serviceItems, draft
                 onChange={(e) => setTime(e.target.value)}
                 className="min-h-kiosk-sm rounded-kiosk border-2 border-slate-300 bg-white px-4 text-kiosk-base outline-none focus:border-kiosk-primary"
               >
-                {!TIME_OPTIONS.includes(time) && <option value={time}>{time}</option>}
-                {TIME_OPTIONS.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
+                {!TIME_OPTIONS.includes(time) && !OFF_HOURS_OPTIONS.includes(time) && <option value={time}>{time}</option>}
+                <optgroup label={`營業時間 ${BUSINESS_HOURS.start}:00–${BUSINESS_HOURS.end}:00`}>
+                  {TIME_OPTIONS.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="其他時間（營業時間外）">
+                  {OFF_HOURS_OPTIONS.map((t) => (
+                    <option key={t} value={t}>
+                      {t}
+                    </option>
+                  ))}
+                </optgroup>
               </select>
             </label>
           </div>
@@ -501,6 +519,11 @@ export function AppointmentFormModal({ open, storeId, staff, serviceItems, draft
           {startAt && endAt && (
             <p className="mt-3 rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-medium text-slate-700">
               🕐 {formatMonthDay(startAt)} {formatTime(startAt)} – {formatTime(endAt)}（{durationLabel(duration)}）
+            </p>
+          )}
+          {startAt && endAt && isOutsideBusinessHours(startAt, endAt) && (
+            <p className="mt-2 rounded-xl bg-amber-50 px-4 py-2.5 text-sm font-semibold text-amber-800">
+              ⚠️ 超過營業時間（{BUSINESS_HOURS.start}:00–{BUSINESS_HOURS.end}:00），仍可儲存
             </p>
           )}
         </Section>
@@ -580,9 +603,16 @@ export function AppointmentFormModal({ open, storeId, staff, serviceItems, draft
 }
 
 function nextRoundedSlot(): Date {
-  const d = new Date();
-  d.setMinutes(Math.ceil((d.getMinutes() + 1) / 30) * 30, 0, 0);
-  return d;
+  return defaultSlotFor(new Date());
+}
+
+/** 預約是否超出營業時間（開始早於開店或結束晚於打烊） */
+function isOutsideBusinessHours(start: Date, end: Date): boolean {
+  const open = startOfDay(start);
+  open.setHours(BUSINESS_HOURS.start);
+  const close = startOfDay(start);
+  close.setHours(BUSINESS_HOURS.end);
+  return start < open || end > close;
 }
 
 function Section({ step, title, optional, children }: { step: number; title: string; optional?: boolean; children: React.ReactNode }) {

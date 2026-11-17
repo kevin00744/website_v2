@@ -8,6 +8,7 @@ import type { AuthenticatedUser } from '../auth/types';
 import {
   applySignaturesToDisclaimerPdf,
   buildDisclaimerPdf,
+  CURRENT_LAYOUT_VERSION,
   DISCLAIMER_FILE_NAME,
   formatDateLabel,
   type DisclaimerHeaderData,
@@ -39,6 +40,8 @@ interface FrozenDisclaimerSnapshot {
   title: string;
   sections: DisclaimerSection[];
   headerData: DisclaimerHeaderData;
+  /** 版面版本；舊快照沒有這個欄位，視為 1（見 disclaimer-pdf.util.ts CURRENT_LAYOUT_VERSION） */
+  layoutVersion?: number;
 }
 
 /**
@@ -119,6 +122,7 @@ export class CustomerDisclaimerService {
       title: template.title,
       sections,
       headerData,
+      layoutVersion: CURRENT_LAYOUT_VERSION,
       signerRole: 'staff',
       signedAt: signedAt.toISOString(),
     };
@@ -211,6 +215,7 @@ export class CustomerDisclaimerService {
       title: frozen.title,
       sections: frozen.sections,
       headerData: frozen.headerData,
+      layoutVersion: frozen.layoutVersion ?? 1,
       signerRole: 'customer',
       signedAt: signedAt.toISOString(),
     };
@@ -221,7 +226,12 @@ export class CustomerDisclaimerService {
       signaturePoints: input.signaturePoints,
     });
 
-    const { anchors } = await buildDisclaimerPdf({ title: frozen.title, sections: frozen.sections }, frozen.headerData);
+    // 用服務人員簽署當時的版面版本重算座標，才會和磁碟上那份 PDF 對齊
+    const { anchors } = await buildDisclaimerPdf(
+      { title: frozen.title, sections: frozen.sections },
+      frozen.headerData,
+      frozen.layoutVersion ?? 1,
+    );
     const existingPdf = await loadCustomerFile(customerId, DISCLAIMER_FILE_NAME);
     const signedPdfBytes = await applySignaturesToDisclaimerPdf(existingPdf, anchors, [
       {

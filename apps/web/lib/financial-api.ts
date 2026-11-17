@@ -1,6 +1,6 @@
 import { apiRequest, apiRequestBlob } from './api-client';
 
-export type FinancialCategory = 'sales' | 'top_up' | 'outsource_payout' | 'daily_expense' | 'petty_cash_replenish';
+export type FinancialCategory = 'sales' | 'top_up' | 'outsource_payout' | 'daily_expense' | 'petty_cash_replenish' | 'refund';
 export type FinancialRecordType = 'income' | 'expense';
 
 export interface FinancialRecord {

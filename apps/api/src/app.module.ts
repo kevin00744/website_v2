@@ -16,6 +16,8 @@ import { PromotionPlansModule } from './promotion-plans/promotion-plans.module';
 import { PettyCashModule } from './petty-cash/petty-cash.module';
 import { CustomerCoursesModule } from './customer-courses/customer-courses.module';
 import { AppointmentsModule } from './appointments/appointments.module';
+import { CustomerTransactionsModule } from './customer-transactions/customer-transactions.module';
+import { ConsentTemplatesModule } from './consent-templates/consent-templates.module';
 import { LineModule } from './line/line.module';
 
 @Module({
@@ -37,6 +39,8 @@ import { LineModule } from './line/line.module';
     PettyCashModule,
     CustomerCoursesModule,
     AppointmentsModule,
+    CustomerTransactionsModule,
+    ConsentTemplatesModule,
     LineModule,
   ],
 })

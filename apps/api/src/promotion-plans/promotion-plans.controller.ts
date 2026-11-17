@@ -19,6 +19,10 @@ interface PurchasePromotionPlanDto {
   customerId: number;
   staffId?: number;
   paymentMethod: PaymentMethod;
+  price?: number;
+  bonusAmount?: number;
+  items?: Array<{ serviceItemId: number; sessions: number }>;
+  adjustNote?: string;
 }
 
 /** 促銷方案：staff 可讀（POS 結帳選方案）；manager/admin 可建立/刪除 */

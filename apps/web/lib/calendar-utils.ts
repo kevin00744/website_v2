@@ -2,6 +2,31 @@
 
 export const WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六'];
 
+/** 門市營業時間（24 小時制，整點）。行事曆預設只顯示這段，預約超出時才自動往外延伸。 */
+export const BUSINESS_HOURS = { start: 13, end: 21 } as const;
+
+/**
+ * 新增預約的預設開始時間：
+ * - 今天：下一個整點或半點，但不早於開店；接近打烊（最後 30 分鐘）就改到隔天開店
+ * - 其他日：開店時間
+ */
+export function defaultSlotFor(day: Date, now = new Date()): Date {
+  const open = startOfDay(day);
+  open.setHours(BUSINESS_HOURS.start);
+  if (!isSameDay(day, now)) return open;
+  const d = new Date(now);
+  d.setMinutes(Math.ceil((d.getMinutes() + 1) / 30) * 30, 0, 0);
+  if (d < open) return open;
+  const lastStart = startOfDay(day);
+  lastStart.setHours(BUSINESS_HOURS.end, -30);
+  if (d > lastStart) {
+    const next = addDays(startOfDay(day), 1);
+    next.setHours(BUSINESS_HOURS.start);
+    return next;
+  }
+  return d;
+}
+
 export function startOfDay(d: Date): Date {
   const r = new Date(d);
   r.setHours(0, 0, 0, 0);

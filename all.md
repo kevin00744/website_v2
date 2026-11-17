@@ -1,166 +1,125 @@
 # 專案檔案說明（all.md）
 
-> 最後更新：2026-11-15
-> 說明專案裡每一個重要檔案/資料夾的功能，方便之後修改時知道該改哪裡。
+> 最後更新：2026-11-17
+> 說明專案裡每個重要檔案 / 資料夾的用途，方便修改時知道該改哪裡。架構與流程見 [SYSTEM.md](./SYSTEM.md)，操作見 [Start.md](./Start.md)。
 
 ---
 
 ## 1. 根目錄
 
-| 檔案 | 功能 |
+| 檔案 | 用途 |
 |------|------|
-| `docker-compose.yml` | 四個服務：`nginx`（SSL 反向代理）、`web`（Next.js）、`api`（NestJS）、`db`（Postgres 16）。容器主行程為 `tail -f /dev/null`，NestJS 和 Next.js **需手動啟動**。 |
-| `docker/nginx/default.conf` | nginx 設定：port 80 → HTTPS redirect；port 443 → SSL 終止 → proxy 到 web:3000 |
-| `docker/nginx/ssl/` | SSL 憑證（自簽）：`selfsigned.crt` + `selfsigned.key` |
-| `package.json` | 根目錄 workspace 設定（`apps/*`、`packages/*`）。 |
-| `Start.md` | 啟動/關閉/重啟/build 完整操作手冊（含常見問題診斷）。 |
-| `SYSTEM.md` | 完整系統說明（架構、DB 模型、API 端點、核心流程、設計決策）。 |
-| `README.md` | 快速入門、技術棧、連線資訊、文件索引。 |
-| `all.md` | 本檔案，逐檔說明專案結構。 |
+| `docker-compose.prod.yml` | **正式環境**：`db`、`api`、`web` 三個容器，project 名稱 `website_v2_prod`，自動重啟 |
+| `deploy.sh` | 一鍵部署：備份 → 建置 API / 網站 → 換版 → 重啟 → 檢查 |
+| `.env` | 環境變數（網域、資料庫密碼、JWT、LINE），不進版控 |
+| `docker-compose.yml`、`docker/nginx/` | 舊的開發用設定（自簽憑證），正式環境不使用；正式 HTTPS 由主機 nginx + Let's Encrypt 負責 |
+| `package.json` | npm workspace（`apps/*`、`packages/*`） |
+| `.trail/learnings/` | 開發過程的決策、排除過的做法與注意事項 |
+| `README.md`、`Start.md`、`SYSTEM.md`、`all.md` | 文件 |
 
 ---
 
 ## 2. `apps/api`（NestJS 後端）
 
-### 根設定
-
-| 檔案 | 功能 |
+| 檔案 / 資料夾 | 用途 |
 |------|------|
-| `package.json` | 依賴與指令：`npm run build`（nest build，輸出 `dist/src/`） |
-| `tsconfig.json` | TypeScript 設定，`outDir: ./dist`，strict 模式 |
-| `nest-cli.json` | Nest CLI 設定（`sourceRoot: src`） |
-| `dist/src/main.js` | **production 啟動點**（`node dist/src/main.js`），由 `npm run build` 產生 |
+| `prisma/schema.prisma` | 全部資料表設計 |
+| `prisma/migrations/` | migration 歷程；API 啟動時自動 `migrate deploy` |
+| `dist/` | 建置輸出，正式環境執行 `node dist/src/main.js` |
+| `storage/customers/<id>/` | 顧客的同意書 PDF（`disclaimer.pdf`）與照片 |
+| `storage/cms/uploads/` | 舊 CMS 上傳檔 |
+| `assets/fonts/NotoSansTC-Regular.ttf` | PDF 用中文字型 |
+| `scripts/` | 一次性維運腳本（見 Start.md 第五節） |
+| `richmenu.png` | LINE 圖文選單圖片（`scripts/line-richmenu.ts` 使用） |
 
-### `prisma/`
+### `src/` 模組
 
-| 檔案 | 功能 |
+| 模組 | 用途 |
 |------|------|
-| `schema.prisma` | **整個系統的資料表設計**。角色：`system_admin/admin/manager/accountant/staff`（無 dealer/general_agent/editor/region）。email 為 nullable。Store 無 region/dealerId。 |
-| `migrations/` | Prisma migration 歷程 |
-| `seed.ts` | 種子資料：`kevin00744`（system_admin）+ 璨妍門市（DEFAULT）分店。upsert 用 `where: { username }` 而非 `where: { email }`。 |
-
-### `src/` 各模組
-
-| 模組 | 路徑 | 說明 |
-|------|------|------|
-| 進入點 | `main.ts` | port 3000，全域前綴 `/api/v2`，啟用 CORS |
-| 根模組 | `app.module.ts` | 匯入所有子模組 |
-| **auth** | `src/auth/` | JWT 認證（username 登入）、JwtAuthGuard、RolesGuard。`AuthenticatedUser` 型別無 region/dealerId。`auth.service.ts` 登入時查 storeFeatures。 |
-| **users** | `src/users/` | 帳號 CRUD。manager 可建 accountant。email 選填。`PATCH /users/me` 個人設定（username/phone/password）。 |
-| **stores** | `src/stores/` | 分店 CRUD。無 region/dealer。`setActive()`、`deleteStoreStaff()`、`updateStoreFeatures()`。 |
-| **customers** | `src/customers/` | 顧客 CRUD（姓名/身分證終身鎖定），顧客編號生成，療程紀錄，同意書 PDF，錢包，課程 |
-| **customer-disclaimer** | `src/customers/customer-disclaimer.service.ts` | 同意書補簽流程（contentSnapshot 凍結座標） |
-| **disclaimer-pdf** | `src/customers/disclaimer-pdf.util.ts` | pdf-lib PDF 生成 |
-| **customer-courses** | `src/customer-courses/` | 課程退費轉儲值金（`refund-to-credit`），課程轉換（`convert`） |
-| **service-items** | `src/service-items/` | 服務品項 CRUD |
-| **service-records** | `src/service-records/` | POS 服務紀錄，三種消費方式，多重付款，核銷還原（`rollback`） |
-| **financial** | `src/financial/` | 財務帳務（FinancialRecord） |
-| **petty-cash** | `src/petty-cash/` | 備用金系統（PettyCashLog），手動增減，設定目標金額 |
-| **inventory** | `src/inventory/` | 各分店庫存，補貨請求。已移除 dealer region 篩選。 |
-| **attendance** | `src/attendance/` | 上下班打卡，月份考勤統計，業績統計 |
-| **chat** | `src/chat/` | WebSocket 即時通訊，一對一對話。已移除 region room 邏輯。 |
-| **contact** | `src/contact/` | 聯絡訊息管理（`contact_messages` 仍有 region 欄位，映射台灣縣市→A/B/C，與 AuthenticatedUser.region 無關） |
-| **promotion-plans** | `src/promotion-plans/` | 促銷方案 CRUD |
-| **signature** | `src/signature/` | 電子簽名雜湊工具 |
-| **prisma** | `src/prisma/` | `PrismaService`（全域 singleton） |
-| **common** | `src/common/` | `AppError`、`GlobalExceptionFilter`、`upload.util` |
+| `main.ts`、`app.module.ts` | 進入點（port 3000、前綴 `/api/v2`、CORS）、匯入所有模組 |
+| `auth/` | 登入、refresh token、JwtAuthGuard、RolesGuard、SystemAdminGuard、`role-access.util.ts` |
+| `users/`、`stores/` | 帳號、分店、員工、功能開關 |
+| `customers/` | 顧客 CRUD、錢包、課程列表、療程紀錄、同意書簽署（`customer-disclaimer.service.ts`）、PDF 排版（`disclaimer-pdf.util.ts`，含 `CURRENT_LAYOUT_VERSION`） |
+| `consent-templates/` | 同意書管理（版本、啟用、PDF 預覽） |
+| `customer-courses/` | 課程退費、退課轉儲值、課程轉換、退費試算 |
+| `customer-transactions/` | 交易主表 helper（`transaction-ledger.ts`）、交易列表、刪除回溯 |
+| `service-records/` | POS 結帳（扣堂先買先用、可跨份）、查詢、核銷還原 |
+| `promotion-plans/` | 套裝方案 CRUD 與購買（可調整金額 / 堂數） |
+| `appointments/` | 預約 CRUD、撞期檢查、LINE 預約可見範圍 |
+| `line/` | Webhook、LIFF、後台管理、Flex 訊息、推播提醒 |
+| `financial/`、`petty-cash/` | 收支、日結、CSV、外包給付、備用金 |
+| `inventory/`、`attendance/`、`service-items/`、`contact/`、`chat/` | 庫存、打卡考勤、服務品項、聯絡訊息、即時通訊 |
+| `signature/` | 簽名雜湊與驗證工具 |
+| `common/` | `AppError`、例外過濾器、`phone.util.ts`（電話正規化）、上傳工具 |
+| `prisma/` | `PrismaService` |
 
 ---
 
 ## 3. `apps/web`（Next.js 前端）
 
-### 根設定
-
-| 檔案 | 功能 |
+| 檔案 / 資料夾 | 用途 |
 |------|------|
-| `package.json` | Next.js 14 依賴，Tailwind CSS，React Hook Form，Zod |
-| `next.config.js` | Next.js 設定（API rewrite proxy，靜態檔案路徑） |
-| `.next/` | Build 輸出，`PORT=3000 next start` 從這裡啟動 |
+| `next.config.js` | 轉譯共用套件、CMS 圖片轉發、pdf.js 的 `canvas` 別名 |
+| `tailwind.config.js` | kiosk 色票與字級；`xs` / `sm` 字級加大、灰字加深 |
+| `middleware.ts` | 未登入導向 `/login`、部分頁面的角色限制 |
+| `public/manifest.json`、`public/icons/` | 加入主畫面設定與圖示（含 180×180 apple-touch-icon） |
+| `app/layout.tsx` | 全域 layout、PWA meta、文字大小啟動腳本 |
+| `app/globals.css` | 文字大小（`html[data-text-size]`）、安全區域 `.pt-safe` / `.pb-safe` |
 
-### `app/`（路由）
+### `app/(admin)/` 頁面
 
-| 路徑 | 說明 |
+| 路徑 | 用途 |
 |------|------|
-| `app/page.tsx` | 根路徑 `/` → 重導向 `/admin/login` |
-| `app/layout.tsx` | 全域 layout，PWA meta tags |
-| `app/(admin)/login/` | 登入頁（username + 密碼 + 記住此裝置 checkbox） |
-| `app/(admin)/customers/` | 顧客資料（左側列表 + 右側 CustomerDetailDrawer） |
-| `app/(admin)/inventory/` | 庫存管理 |
-| `app/(admin)/attendance/` | 打卡頁 |
-| `app/(admin)/manager-dashboard/` | 考勤 & 業績統計 |
-| `app/(admin)/financial/` | 財務帳務 |
-| `app/(admin)/petty-cash/` | 備用金（移除 storeName 顯示，含設定目標金額功能） |
-| `app/(admin)/expenses/` | 支出管理 |
-| `app/(admin)/stores/` | 分店管理 |
-| `app/(admin)/store-settings/` | 分店功能設定（店長勾選啟用模組） |
-| `app/(admin)/store-staff/` | 員工帳號管理（店長專用） |
-| `app/(admin)/store-service-items/` | 服務品項管理 |
-| `app/(admin)/promotion-plans/` | 促銷方案管理 |
-| `app/(admin)/contact-messages/` | 聯絡訊息 |
-| `app/(admin)/contact-categories/` | 詢問類別管理（admin 專用） |
-| `app/(admin)/users/` | 帳號管理（admin 用） |
-| `app/(admin)/settings/` | 個人設定（4 tabs：基本資料/安全性/分店設定/**切換 PIN**） |
+| `login/` | 登入 |
+| `admin/` | 首頁 |
+| `customers/` | 顧客資料 |
+| `calendar/` | 預約行事曆 |
+| `consent-templates/` | 同意書管理 |
+| `financial/`、`manager-dashboard/`、`petty-cash/`、`expenses/` | 財務、考勤業績、備用金、支出 |
+| `store-staff/`、`store-service-items/`、`promotion-plans/`、`store-settings/` | 員工、服務品項、方案、分店設定 |
+| `line/`、`line-test/` | LINE 後台管理、測試頁 |
+| `attendance/`、`inventory/`、`settings/`、`users/`、`stores/`、`contact-*`、`chat-contacts/` | 打卡、庫存、個人設定（含 PIN）、帳號、分店、聯絡訊息、聊天聯絡人 |
+| `app/liff/` | 顧客在 LINE 開啟的頁面：`bind`、`me`、`booking` |
 
 ### `components/admin/`
 
-| 元件 | 說明 |
+| 元件 | 用途 |
 |------|------|
-| `AdminShell.tsx` | 側欄 shell。頂部有「帳號管理 / 登出」按鈕開啟 AccountSwitcher。依 `navigationConfig` + 角色 + storeFeatures 動態渲染導覽。 |
-| `AccountSwitcher.tsx` | 多帳號切換元件。4 個視圖：帳號列表（含目前帳號）/ PIN 輸入 / 新帳號登入 / 登出確認。 |
-| `customers/CustomerDetailDrawer.tsx` | 顧客詳情側拉板 |
-| `customers/POSCheckoutModal.tsx` | POS 結帳 Modal |
-| `customers/TreatmentRecordTab.tsx` | 療程紀錄（含核銷還原按鈕） |
-| `kiosk/PinPad.tsx` | 4 位數 PIN 輸入鍵盤元件 |
-| `kiosk/` | 共用 UI 元件（KioskButton、KioskInput、KioskModal 等） |
+| `AdminShell.tsx` | 側欄、手機頂部列、文字大小、安裝提示；`/login` 不套外框 |
+| `AccountSwitcher.tsx` | 多帳號 PIN 切換、登出 |
+| `TextSizeControl.tsx` | 文字大小（側欄三格「A」、手機「Aa」浮層） |
+| `InstallHint.tsx` | iOS「加入主畫面」提示 |
+| `PdfViewer.tsx` | iPhone / iPad 的 PDF 檢視器（pdf.js，可捲動、分享 / 儲存） |
+| `calendar/` | `CalendarViews`（時間格 / 月曆）、`AppointmentFormModal`（新增 / 編輯預約）、`AppointmentDetailModal` |
+| `customers/CustomerDetailDrawer.tsx` | 顧客詳細資料（基本資料、同意書、使用紀錄、課程管理、交易紀錄） |
+| `customers/POSCheckoutModal.tsx` | POS 結帳 |
+| `customers/AdjustQuickPicks.tsx` | 打折 / 折價券 / 折抵快速選單（結帳、退費共用） |
+| `customers/TransactionsTab.tsx`、`TransactionDetailModal.tsx` | 交易紀錄、歷程、刪除回溯 |
+| `customers/CourseRefundModal.tsx` | 課程退費 / 退課轉儲值 |
+| `customers/CourseConvertModal.tsx` | 課程轉換 |
+| `customers/ExosomeConsentModal.tsx`、`DisclaimerSignSection.tsx`、`SignatureCanvasStep.tsx`、`StaffSignatureStep.tsx`、`InlineSignaturePad.tsx` | 同意書雙方簽署與簽名板 |
+| `customers/NewCustomerWizard.tsx`、`RecentlyDeletedModal.tsx` | 新增顧客、最近刪除 |
+| `kiosk/` | 共用 UI：`CenteredModal`、`KioskButton`、`KioskInput`、`KioskSelect`、`MaskedInput`、`PinPad` |
 
-### `lib/`（API client 與工具）
+### `lib/`
 
-| 檔案 | 說明 |
+| 檔案 | 用途 |
 |------|------|
-| `api-client.ts` | `apiRequest()` + `resolveApiBaseUrl()`（依 `window.location.hostname:3101`，**不寫死 localhost**） |
-| `auth.ts` | `saveAuth(token, user, rememberDays?)` / `getAuthUser()` 操作 JWT Cookie。`rememberDays` 預設 1，「記住此裝置」時傳 30。 |
-| `multi-account.ts` | 多帳號 localStorage 儲存：`saveAccount(token, user, pin)`、`validatePin(userId, pin)`、`listAccounts()`、`removeAccount(userId)` |
-| `navigationConfig.ts` | 統一導覽設定，含 `featureKey` 和 `roleGuard`（已移除 dealer/general_agent 相關項目） |
-| `customers-api.ts` | 顧客相關 API 呼叫 |
-| `stores-api.ts` | 分店相關 API 呼叫（`updateStoreFeatures` 等） |
-| `users-api.ts` | 帳號相關 API 呼叫 |
-| `service-records-api.ts` | POS 服務紀錄、核銷還原（`rollbackServiceRecord`） |
-| `petty-cash-api.ts` | 備用金操作 |
-| `financial-api.ts` | 財務帳務 |
-| `inventory-api.ts` | 庫存管理 |
-
-### `hooks/`
-
-| 檔案 | 說明 |
-|------|------|
-| `useStoreFeatures.ts` | 讀取當前登入者 `storeFeatures` 的 hook，含 `hasFeature()`（admin 永遠通過） |
+| `api-client.ts` | `apiRequest()`、`apiRequestBlob()`（支援 POST）、自動用 refresh token 換新 |
+| `auth.ts`、`auth-api.ts`、`multi-account.ts` | 登入狀態、登入 API、多帳號 PIN |
+| `navigationConfig.ts` | 側欄項目與角色限制 |
+| `*-api.ts` | 各模組 API client（customers、appointments、customer-transactions、consent-templates、service-records、promotion-plans、financial、petty-cash、line-admin、liff 等） |
+| `calendar-utils.ts` | 日期工具、營業時間 `BUSINESS_HOURS`、服務人員配色 |
+| `pdf-viewer.ts` | 開 PDF（電腦開新分頁、iPhone / iPad 用檢視器） |
+| `pwa.ts` | 判斷 iOS / 主畫面模式 |
+| `text-size.ts` | 文字大小設定 |
+| `format.ts`、`use-debounce.ts` | 格式化、debounce |
 
 ---
 
 ## 4. `packages/`（前後端共用）
 
-### `packages/shared-types/`
-
-| 檔案 | 說明 |
+| 檔案 | 用途 |
 |------|------|
-| `auth.ts` | 登入 schema（Zod）、`AuthUser` 型別（含 storeFeatures，無 region/dealerId） |
-| `customer.ts` | `CustomerSummary`、`CustomerDetail` |
-| `store.ts` | `StoreSummary`（無 dealerId/dealerName/region） |
-| `user.ts` | `UserSummary`、Role enum（`system_admin/admin/manager/accountant/staff`）、帳號建立/更新 schema。email 為 optional。 |
-| `service-record.ts` | `ServiceRecord` 型別、付款方式 enum |
-
----
-
-## 5. 重要設計慣例（快速參考）
-
-| 問題 | 正確做法 |
-|------|---------|
-| 瀏覽器端 API URL | `resolveApiBaseUrl()`，**不寫死 localhost** |
-| 登入/登出後導頁 | `window.location.href = '/admin'`，不用 `router.push` |
-| Prisma 含關聯的查詢型別 | `satisfies Prisma.XxxSelect` + `Prisma.XxxGetPayload<{ select: typeof CONST }>` |
-| void 端點回傳解析 | `const text = await response.text(); return text ? JSON.parse(text) : undefined` |
-| Schema 加新欄位後 | `npx prisma generate` 再 `npm run build` |
-| API build 輸出路徑 | `dist/src/main.js`（不是 `dist/main.js`） |
-| Web 啟動指令 | `PORT=3000 /workspace/node_modules/.bin/next start`（在 `/workspace/apps/web` 執行） |
-| email upsert | 用 `where: { username }`，不用 `where: { email }`（nullable 欄位不能做 unique key） |
-| DB 容器重建後 | API 容器也要 `--force-recreate`，確保 DNS 解析到新 IP |
+| `copy/zh-TW.ts` | 錯誤碼 → 中文訊息。新增 `AppError` 代碼時要在這裡補一筆 |
+| `shared-types/` | `auth.ts`、`customer.ts`、`store.ts`、`user.ts` 等共用型別與 Zod schema |

@@ -12,7 +12,17 @@ module.exports = {
           danger: '#dc2626',
         },
       },
+      // 灰色輔助文字加深一階（只影響文字顏色，不影響 bg-/border- 的灰色）
+      textColor: {
+        slate: {
+          400: '#64748b',
+          500: '#475569',
+        },
+      },
       fontSize: {
+        // 灰色輔助文字（說明、日期、標籤）幾乎都是 xs / sm，全站加大一階讓 iPad 上看得清楚
+        xs: ['0.875rem', { lineHeight: '1.25rem' }],
+        sm: ['1rem', { lineHeight: '1.5rem' }],
         // 後台專用字級，比 Tailwind 預設再放大一階，方便門市人員在 iPad 上閱讀。
         'kiosk-base': ['1.25rem', { lineHeight: '1.75rem' }],
         'kiosk-lg': ['1.5rem', { lineHeight: '2rem' }],

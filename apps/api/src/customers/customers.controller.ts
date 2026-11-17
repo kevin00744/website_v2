@@ -296,25 +296,4 @@ export class CustomersController {
   ) {
     return this.customersService.topUpWallet(actor, id, dto);
   }
-
-  /** 取得外泌體補簽同意書 PDF */
-  @Get(':id/exosome-consent')
-  async getExosomeConsent(@CurrentUser() actor: AuthenticatedUser, @Param('id', ParseIntPipe) id: number, @Res() res: Response) {
-    const buffer = await this.customersService.getExosomeConsentPdf(actor, id);
-    res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': 'inline; filename="exosome-consent.pdf"',
-    });
-    res.send(buffer);
-  }
-
-  /** 舊顧客補簽外泌體使用同意書 */
-  @Post(':id/exosome-consent')
-  signExosomeConsent(
-    @CurrentUser() actor: AuthenticatedUser,
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: { signatureUrl: string; signaturePoints?: unknown[]; notes?: string },
-  ) {
-    return this.customersService.signExosomeConsent(actor, id, dto);
-  }
 }

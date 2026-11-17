@@ -157,7 +157,7 @@ export default function StoreStaffPage() {
         </>
       )}
 
-      <div className="fixed inset-x-0 bottom-0 border-t border-slate-200 bg-white p-4 md:hidden">
+      <div className="fixed inset-x-0 bottom-0 border-t border-slate-200 bg-white p-4 pb-safe md:hidden">
         <KioskButton fullWidth onClick={openCreateModal}>
           ＋ 新增員工帳號
         </KioskButton>

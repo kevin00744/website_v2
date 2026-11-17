@@ -1,14 +1,16 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, type Region } from '@prisma/client';
+import { Prisma, type PaymentMethod, type Region } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AppError } from '../common/errors/app-error';
 import { buildRecordHash, hashJson, MIN_SIGNATURE_POINTS, type SignaturePoint } from '../signature/signature-hash.util';
 import { canActorAccessCustomer, customerVisibilityWhere } from '../auth/role-access.util';
 import { formatPhoneDisplay, normalizePhone, normalizePhoneOrNull, phoneVariants } from '../common/phone.util';
 import type { AuthenticatedUser } from '../auth/types';
+import { createLedgerEntry } from '../customer-transactions/transaction-ledger';
 import {
   applySignaturesToDisclaimerPdf,
   buildDisclaimerPdf,
+  CURRENT_LAYOUT_VERSION,
   DISCLAIMER_FILE_NAME,
   formatDateLabel,
   type DisclaimerHeaderData,
@@ -16,7 +18,6 @@ import {
 } from './disclaimer-pdf.util';
 import { decodeBase64Png } from './document-pdf.util';
 import { saveCustomerFile } from './customer-file-storage.util';
-import { buildExosomeConsentPdf } from './exosome-consent-pdf.util';
 
 /**
  * 外部列表欄位：基本識別資訊 + 歸屬資訊（區域/分店/顧客編號/建立日期）。
@@ -327,6 +328,7 @@ export class CustomersService {
           title: template.title,
           sections,
           headerData,
+          layoutVersion: CURRENT_LAYOUT_VERSION,
           signerRole: 'staff',
           signedAt: signedAt.toISOString(),
         };
@@ -665,6 +667,17 @@ export class CustomersService {
     }
 
     return this.prisma.$transaction(async (tx) => {
+      const ledger = await createLedgerEntry(tx, {
+        storeId: customer.storeId,
+        customerId,
+        staffId: actor.id,
+        operatorId: actor.id,
+        kind: 'top_up',
+        amount: input.amount,
+        listAmount: input.amount,
+        paymentMethod: input.paymentMethod as PaymentMethod,
+        note: input.note,
+      });
       const wallet = await tx.customerWallet.upsert({
         where: { customerId },
         create: { customerId, balance: input.amount, bonusBalance: 0 },
@@ -679,6 +692,7 @@ export class CustomersService {
           bonusAmount: 0,
           performedById: actor.id,
           note: input.note ?? '直接儲值',
+          transactionId: ledger.id,
         },
       });
       await tx.financialRecord.create({
@@ -690,6 +704,7 @@ export class CustomersService {
           paymentMethod: input.paymentMethod as never,
           performedById: actor.id,
           description: `顧客 #${customerId} 直接儲值`,
+          transactionId: ledger.id,
         },
       });
       if (input.paymentMethod === 'cash') {
@@ -715,6 +730,7 @@ export class CustomersService {
     const courses = await this.prisma.customerCourse.findMany({
       where: {
         customerId,
+        voidedAt: null,
         usedSessions: { lt: this.prisma.customerCourse.fields.totalSessions },
       },
       include: {
@@ -736,90 +752,6 @@ export class CustomersService {
       }));
   }
 
-  /** 舊顧客補簽外泌體使用同意書（不覆蓋建檔日期與基本資料） */
-  async signExosomeConsent(
-    actor: AuthenticatedUser,
-    customerId: number,
-    input: { signatureUrl: string; signaturePoints?: unknown[]; notes?: string },
-  ) {
-    const customer = await this.prisma.customer.findFirst({
-      where: { id: customerId, deletedAt: null },
-      select: {
-        id: true, storeId: true, hasExosomeConsent: true, nationalId: true, customerCode: true,
-        store: { select: { code: true } },
-      },
-    });
-    if (!customer) throw new AppError('CUSTOMER_NOT_FOUND', '找不到此顧客', 404);
-    if (!canActorAccessCustomer(actor, { storeId: customer.storeId })) {
-      throw new AppError('PERMISSION_DENIED', '無權限存取此顧客資料', 403);
-    }
-    if (customer.hasExosomeConsent) {
-      throw new AppError('EXOSOME_CONSENT_ALREADY_SIGNED', '此顧客已完成外泌體同意書補簽', 409);
-    }
-
-    // 補簽完成後，若顧客還沒有 customerCode 且有身分證字號，依 [店號]-[身分證] 格式補上
-    const newCustomerCode =
-      !customer.customerCode && customer.nationalId
-        ? `${customer.store.code}-${customer.nationalId}`
-        : undefined;
-
-    const now = new Date();
-    await this.prisma.$transaction([
-      this.prisma.exosomeConsentLog.create({
-        data: {
-          customerId,
-          signedAt: now,
-          signatureUrl: input.signatureUrl,
-          signaturePoints: input.signaturePoints as object[] | undefined,
-          operatorId: actor.id,
-          notes: input.notes,
-        },
-      }),
-      this.prisma.customer.update({
-        where: { id: customerId },
-        data: {
-          hasExosomeConsent: true,
-          exosomeConsentSignedAt: now,
-          isExosomeUser: true,
-          exosomeConsentSignatureUrl: input.signatureUrl,
-          ...(newCustomerCode ? { customerCode: newCustomerCode } : {}),
-        },
-      }),
-    ]);
-
-    return { success: true, signedAt: now.toISOString() };
-  }
-
-  async getExosomeConsentPdf(actor: AuthenticatedUser, customerId: number): Promise<Buffer> {
-    const customer = await this.prisma.customer.findFirst({
-      where: { id: customerId, deletedAt: null },
-      select: {
-        id: true, name: true, nationalId: true, phone: true, customerCode: true,
-        hasExosomeConsent: true,
-        exosomeConsentSignedAt: true,
-        exosomeConsentSignatureUrl: true,
-        storeId: true,
-        store: { select: { name: true } },
-      },
-    });
-    if (!customer) throw new AppError('CUSTOMER_NOT_FOUND', '找不到此顧客', 404);
-    if (!canActorAccessCustomer(actor, { storeId: customer.storeId })) {
-      throw new AppError('PERMISSION_DENIED', '無權限存取此顧客資料', 403);
-    }
-    if (!customer.hasExosomeConsent || !customer.exosomeConsentSignedAt) {
-      throw new AppError('EXOSOME_CONSENT_NOT_SIGNED', '此顧客尚未完成外泌體同意書補簽', 404);
-    }
-
-    return buildExosomeConsentPdf({
-      customerName: customer.name,
-      customerCode: customer.customerCode,
-      nationalId: customer.nationalId,
-      phone: formatPhoneDisplay(customer.phone),
-      storeName: customer.store.name,
-      signedAt: customer.exosomeConsentSignedAt,
-      signatureImageUrl: customer.exosomeConsentSignatureUrl,
-    });
-  }
 }
 
 function toListItem(customer: ListRow): CustomerListItem {

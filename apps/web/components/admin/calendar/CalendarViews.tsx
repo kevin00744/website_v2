@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { STATUS_META, type Appointment } from '@/lib/appointments-api';
 import {
+  BUSINESS_HOURS,
   WEEKDAY_LABELS,
   addDays,
   addMinutes,
@@ -16,8 +17,25 @@ import {
   startOfWeek,
   staffColor,
 } from '@/lib/calendar-utils';
+import { TEXT_SIZE_EVENT, rootFontPx } from '@/lib/text-size';
 
-const HOUR_PX = 72;
+/** 每小時高度（rem）：跟著文字大小切換一起縮放，字放大時時段格子也變高、事件文字不會被截掉 */
+const HOUR_REM = 4.5;
+
+function useHourPx(): number {
+  const [px, setPx] = useState(HOUR_REM * 16);
+  useEffect(() => {
+    const update = () => setPx(HOUR_REM * rootFontPx());
+    update();
+    window.addEventListener(TEXT_SIZE_EVENT, update);
+    return () => window.removeEventListener(TEXT_SIZE_EVENT, update);
+  }, []);
+  return px;
+}
+const OFF_HOURS_STYLE: React.CSSProperties = {
+  backgroundColor: 'rgb(248 250 252 / 0.9)',
+  backgroundImage: 'repeating-linear-gradient(135deg, rgb(226 232 240 / 0.7) 0, rgb(226 232 240 / 0.7) 1px, transparent 1px, transparent 8px)',
+};
 const SNAP_MIN = 15;
 
 export interface GridColumn {
@@ -54,6 +72,9 @@ export function TimeGrid({
   onEventDrop,
 }: TimeGridProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const HOUR_PX = useHourPx();
+  /** 以標準字級（72px/小時）為基準的縮放比例 */
+  const scale = HOUR_PX / 72;
   const [now, setNow] = useState(() => new Date());
   const [hover, setHover] = useState<{ col: string; minute: number } | null>(null);
   const [dragging, setDragging] = useState<{ appt: Appointment; grabOffset: number } | null>(null);
@@ -180,6 +201,20 @@ export function TimeGrid({
                   setDropPreview(null);
                 }}
               >
+                {/* 營業時間外：淡灰斜紋 + 開店/打烊粗線 */}
+                {hourStart < BUSINESS_HOURS.start && (
+                  <div
+                    className="pointer-events-none absolute inset-x-0 top-0 border-b-2 border-slate-300"
+                    style={{ height: (BUSINESS_HOURS.start - hourStart) * HOUR_PX, ...OFF_HOURS_STYLE }}
+                  />
+                )}
+                {hourEnd > BUSINESS_HOURS.end && (
+                  <div
+                    className="pointer-events-none absolute inset-x-0 bottom-0 border-t-2 border-slate-300"
+                    style={{ height: (hourEnd - BUSINESS_HOURS.end) * HOUR_PX, ...OFF_HOURS_STYLE }}
+                  />
+                )}
+
                 {showHover && (
                   <div
                     className="pointer-events-none absolute inset-x-1 z-0 rounded-lg border-2 border-dashed border-kiosk-primary/40 bg-kiosk-primary/5 px-2 py-1 text-xs font-semibold text-kiosk-primary"
@@ -201,11 +236,11 @@ export function TimeGrid({
 
                 {items.map(({ appt, start, end, lane, lanes }) => {
                   const top = (start - hourStart * 60) * pxPerMin;
-                  const height = Math.max((end - start) * pxPerMin, 22);
+                  const height = Math.max((end - start) * pxPerMin, 22 * scale);
                   const color = staffColor(appt.staffId, staffIds);
                   const meta = STATUS_META[appt.status];
                   const inactive = appt.status === 'cancelled' || appt.status === 'no_show';
-                  const compact = height < 44;
+                  const compact = height < 44 * scale;
                   return (
                     <button
                       key={appt.id}
@@ -242,11 +277,11 @@ export function TimeGrid({
                         zIndex: 10 + lane,
                       }}
                     >
-                      <div className={`flex items-center gap-1.5 ${compact ? 'text-[11px]' : 'text-xs'} font-semibold`}>
+                      <div className={`flex items-center gap-1.5 ${compact ? 'text-xs' : 'text-xs'} font-semibold`}>
                         <span className={`h-2 w-2 shrink-0 rounded-full ${meta.dot}`} />
                         <span className="tabular-nums opacity-80">{formatTime(new Date(appt.startAt))}</span>
                         {appt.source === 'line' && (
-                          <span className="shrink-0 rounded bg-[#06C755] px-1 text-[10px] font-bold leading-4 text-white">
+                          <span className="shrink-0 rounded bg-[#06C755] px-1 text-xs font-bold leading-4 text-white">
                             LINE{appt.status === 'booked' ? '・待確認' : ''}
                           </span>
                         )}
@@ -256,7 +291,7 @@ export function TimeGrid({
                         <>
                           <p className={`truncate text-sm font-bold leading-tight ${inactive ? 'line-through' : ''}`}>{appt.customerName}</p>
                           {appt.serviceItem && <p className="truncate text-xs opacity-75">{appt.serviceItem.name}</p>}
-                          {height > 80 && col.staffId === undefined && appt.staff && (
+                          {height > 80 * scale && col.staffId === undefined && appt.staff && (
                             <p className="truncate text-xs opacity-60">👤 {appt.staff.name}</p>
                           )}
                         </>
@@ -360,7 +395,7 @@ export function MonthGrid({ cursor, appointments, staffIds, selected, onDayClick
                     }`}
                   >
                     <span className="tabular-nums opacity-70">{formatTime(new Date(a.startAt))}</span>{' '}
-                    {a.source === 'line' && <span className="rounded bg-[#06C755] px-1 text-[10px] font-bold text-white">LINE</span>}{' '}
+                    {a.source === 'line' && <span className="rounded bg-[#06C755] px-1 text-xs font-bold text-white">LINE</span>}{' '}
                     {a.customerName}
                   </button>
                 );

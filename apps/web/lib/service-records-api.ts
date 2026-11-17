@@ -34,6 +34,8 @@ export interface CreateServiceRecordInput {
   customerSignatureUrl?: string;
   note?: string;
   customerCourseId?: number;
+  /** 結帳時調整金額的備註（選填） */
+  adjustNote?: string;
 }
 
 export interface ServiceRecordResult {

@@ -30,6 +30,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   top_up: '儲值',
   outsource_payout: '外包支出',
   daily_expense: '日常支出',
+  refund: '課程退費',
   petty_cash_replenish: '備用金補充',
 };
 

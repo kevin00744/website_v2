@@ -12,8 +12,10 @@ import {
   type Appointment,
 } from '@/lib/appointments-api';
 import {
+  BUSINESS_HOURS,
   WEEKDAY_LABELS,
   addDays,
+  defaultSlotFor,
   formatMonthDay,
   formatTime,
   fromDateInput,
@@ -220,8 +222,8 @@ export default function CalendarPage() {
   );
 
   const hourRange = useMemo(() => {
-    let start = 9;
-    let end = 21;
+    let start: number = BUSINESS_HOURS.start;
+    let end: number = BUSINESS_HOURS.end;
     for (const a of visible) {
       const s = new Date(a.startAt);
       const e = new Date(a.endAt);
@@ -242,8 +244,8 @@ export default function CalendarPage() {
           key: d.toDateString(),
           date: d,
           title: (
-            <span className="inline-flex items-center gap-1.5">
-              <span className={d.getDay() === 0 || d.getDay() === 6 ? 'text-rose-500' : ''}>週{WEEKDAY_LABELS[d.getDay()]}</span>
+            <span className="inline-flex items-center gap-1 whitespace-nowrap">
+              <span className={d.getDay() === 0 || d.getDay() === 6 ? 'text-rose-500' : ''}><span className="hidden 2xl:inline">週</span>{WEEKDAY_LABELS[d.getDay()]}</span>
               <span
                 className={`inline-flex h-7 min-w-[1.75rem] items-center justify-center rounded-full px-1 ${
                   isSameDay(d, today) ? 'bg-kiosk-primary text-white' : ''
@@ -375,7 +377,7 @@ export default function CalendarPage() {
       {/* ── toolbar ── */}
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="text-kiosk-xl font-bold text-slate-900">預約行事曆</h1>
+          <h1 className="whitespace-nowrap text-kiosk-xl font-bold text-slate-900">預約行事曆</h1>
           {loading && <span className="h-5 w-5 animate-spin rounded-full border-2 border-kiosk-primary border-t-transparent" aria-label="載入中" />}
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -543,7 +545,7 @@ export default function CalendarPage() {
                             {a.staff ? ` · ${a.staff.name}` : ''}
                           </p>
                         </div>
-                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold ${meta.pill}`}>{meta.label}</span>
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-bold ${meta.pill}`}>{meta.label}</span>
                       </button>
                       {(a.status === 'booked' || a.status === 'confirmed') && (
                         <div className="mt-2 flex gap-2 pl-[4.25rem]">
@@ -582,14 +584,14 @@ export default function CalendarPage() {
               </ul>
             )}
           </div>
-          <p className="border-t border-slate-100 px-5 py-2.5 text-[11px] text-slate-400">
+          <p className="border-t border-slate-100 px-5 py-2.5 text-xs text-slate-400">
             快捷鍵：← → 換頁 · T 今天 · N 新增 · D/W/M 切換 · 拖曳預約可改時間
           </p>
         </aside>
       </div>
 
       {/* mobile FAB */}
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white p-4 md:hidden">
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white p-4 pb-safe md:hidden">
         <KioskButton fullWidth onClick={() => openNew()}>
           ＋ 新增預約
         </KioskButton>
@@ -644,17 +646,9 @@ export default function CalendarPage() {
   );
 }
 
-/** 選某天新增時的預設開始時間：今天 → 下一個整點半；其他日 → 10:00 */
+/** 選某天新增時的預設開始時間（依營業時間） */
 function defaultStartFor(day: Date): Date {
-  const now = new Date();
-  if (isSameDay(day, now)) {
-    const d = new Date(now);
-    d.setMinutes(Math.ceil((d.getMinutes() + 1) / 30) * 30, 0, 0);
-    return d;
-  }
-  const d = startOfDay(day);
-  d.setHours(10);
-  return d;
+  return defaultSlotFor(day);
 }
 
 function NavBtn({ onClick, label, children }: { onClick: () => void; label: string; children: React.ReactNode }) {
@@ -669,7 +663,7 @@ function Stat({ label, value, tone = 'text-slate-900' }: { label: string; value:
   return (
     <div className="rounded-xl bg-slate-50 py-2">
       <p className={`text-xl font-bold tabular-nums ${tone}`}>{value}</p>
-      <p className="text-[11px] font-semibold text-slate-500">{label}</p>
+      <p className="text-xs font-semibold text-slate-500">{label}</p>
     </div>
   );
 }

@@ -112,6 +112,9 @@ model User {
   pettyCashLogsPerformed          PettyCashLog[]            @relation("PettyCashLogPerformedBy")
   appointmentsAssigned            Appointment[]             @relation("AppointmentStaff")
   appointmentsCreated             Appointment[]             @relation("AppointmentCreatedBy")
+  customerTransactionsAsStaff     CustomerTransaction[]     @relation("CustomerTransactionStaff")
+  customerTransactionsDeleted     CustomerTransaction[]     @relation("CustomerTransactionDeletedBy")
+  customerTransactionLogs         CustomerTransactionLog[]
 
   @@map("users")
 }
@@ -133,20 +136,21 @@ model Store {
   users     User[]
   customers Customer[]
 
-  inventory        StoreInventory[]
-  inventoryLogs    InventoryLog[]
-  conversations    Conversation[]
-  restockRequests  RestockRequest[]
-  contactMessages  ContactMessage[]
-  attendanceLogs   AttendanceLog[]
-  serviceItems     ServiceItem[]
-  promotionPlans   PromotionPlan[]
-  walletLogs       WalletLog[]
-  customerCourses  CustomerCourse[]
-  financialRecords FinancialRecord[]
-  serviceRecords   ServiceRecord[]
-  pettyCashLogs    PettyCashLog[]
-  appointments     Appointment[]
+  inventory            StoreInventory[]
+  inventoryLogs        InventoryLog[]
+  conversations        Conversation[]
+  restockRequests      RestockRequest[]
+  contactMessages      ContactMessage[]
+  attendanceLogs       AttendanceLog[]
+  serviceItems         ServiceItem[]
+  promotionPlans       PromotionPlan[]
+  walletLogs           WalletLog[]
+  customerCourses      CustomerCourse[]
+  financialRecords     FinancialRecord[]
+  serviceRecords       ServiceRecord[]
+  pettyCashLogs        PettyCashLog[]
+  appointments         Appointment[]
+  customerTransactions CustomerTransaction[]
 
   @@map("stores")
 }
@@ -210,6 +214,7 @@ model Customer {
   courseConversionLogs CourseConversionLog[]
   appointments         Appointment[]
   lineAccount          LineAccount?
+  transactions         CustomerTransaction[]
 
   @@index([name])
   @@index([phone])
@@ -405,6 +410,7 @@ enum FinancialCategory {
   outsource_payout // 外包人員現金日結支出（應用層從 pettyCashBalance 扣）
   daily_expense // 日常雜支
   petty_cash_replenish // 備用金補充（限店長/admin，應用層加到 pettyCashBalance）
+  refund // 課程退費支出（現金退費時從 pettyCashBalance 扣）
 }
 
 enum ConsumptionType {
@@ -717,6 +723,8 @@ model PromotionPlan {
 
   items PromotionPlanItem[]
 
+  transactions CustomerTransaction[]
+
   @@index([storeId])
   @@map("promotion_plans")
 }
@@ -763,6 +771,9 @@ model WalletLog {
   note          String?
   createdAt     DateTime           @default(now()) @map("created_at")
 
+  transactionId Int?                 @map("transaction_id")
+  transaction   CustomerTransaction? @relation(fields: [transactionId], references: [id])
+
   @@index([customerId])
   @@index([storeId])
   @@map("wallet_logs")
@@ -786,6 +797,11 @@ model CustomerCourse {
   refundLogs             CourseRefundToCreditLog[]
   conversionLogsAsSource CourseConversionLog[]     @relation("ConversionFromCourse")
   conversionLogsAsTarget CourseConversionLog[]     @relation("ConversionToCourse")
+
+  /// 所屬交易被系統管理員刪除時作廢，所有查詢剩餘堂數的地方都要排除
+  voidedAt      DateTime?            @map("voided_at")
+  transactionId Int?                 @map("transaction_id")
+  transaction   CustomerTransaction? @relation(fields: [transactionId], references: [id])
 
   @@index([customerId])
   @@map("customer_courses")
@@ -827,7 +843,12 @@ model FinancialRecord {
   description   String?
   createdAt     DateTime            @default(now()) @map("created_at")
 
+  deletedAt     DateTime?            @map("deleted_at")
+  transactionId Int?                 @map("transaction_id")
+  transaction   CustomerTransaction? @relation(fields: [transactionId], references: [id])
+
   @@index([storeId, createdAt])
+  @@index([transactionId])
   @@map("financial_records")
 }
 
@@ -859,6 +880,8 @@ model ServiceRecord {
   rollbackOperatorId   Int?            @map("rollback_operator_id")
   rollbackOperator     User?           @relation("ServiceRecordRollback", fields: [rollbackOperatorId], references: [id])
   createdAt            DateTime        @default(now()) @map("created_at")
+
+  transaction CustomerTransaction?
 
   @@index([customerId])
   @@index([storeId, createdAt])
@@ -1002,4 +1025,74 @@ model LineSetting {
   slotIntervalMin    Int    @default(30) @map("slot_interval_min")
 
   @@map("line_settings")
+}
+
+enum CustomerTransactionKind {
+  service // POS 結帳（單次消費 / 扣儲值 / 扣堂）
+  plan_purchase // 購買促銷方案（課程套組 / 儲值優惠）
+  top_up // 直接儲值
+  refund // 課程退費（退現金等）
+  refund_to_credit // 退課轉儲值金
+}
+
+/// 顧客交易主表：把一筆結帳產生的財務紀錄、錢包異動、課程串在一起，
+/// 系統管理員刪除時才能完整回溯（顧客端 + 財務端一起更正）。
+model CustomerTransaction {
+  id              Int                     @id @default(autoincrement())
+  storeId         Int                     @map("store_id")
+  store           Store                   @relation(fields: [storeId], references: [id])
+  customerId      Int                     @map("customer_id")
+  customer        Customer                @relation(fields: [customerId], references: [id])
+  staffId         Int                     @map("staff_id")
+  staff           User                    @relation("CustomerTransactionStaff", fields: [staffId], references: [id])
+  kind            CustomerTransactionKind
+  /// 實收（扣儲值時為實扣）金額
+  amount          Int
+  /// 原價（品項定價 / 方案價格）；與 amount 不同代表結帳時有調整
+  listAmount      Int                     @map("list_amount")
+  paymentMethod   PaymentMethod?          @map("payment_method")
+  payments        Json?
+  /// 結帳時調整金額 / 堂數的備註（選填）
+  adjustNote      String?                 @map("adjust_note")
+  note            String?
+  serviceRecordId Int?                    @unique @map("service_record_id")
+  serviceRecord   ServiceRecord?          @relation(fields: [serviceRecordId], references: [id])
+  promotionPlanId Int?                    @map("promotion_plan_id")
+  promotionPlan   PromotionPlan?          @relation(fields: [promotionPlanId], references: [id])
+  /// 原方案 / 實際成交內容：{ name, type, price, bonusAmount, items: [{ serviceItemId, name, sessions }] }
+  planOriginal    Json?                   @map("plan_original")
+  planActual      Json?                   @map("plan_actual")
+  /// 系統上線前的舊資料補建：只能看不能刪（無法確定當初的連帶影響）
+  legacy          Boolean                 @default(false)
+  deletedAt       DateTime?               @map("deleted_at")
+  deletedById     Int?                    @map("deleted_by_id")
+  deletedBy       User?                   @relation("CustomerTransactionDeletedBy", fields: [deletedById], references: [id])
+  deleteReason    String?                 @map("delete_reason")
+  createdAt       DateTime                @default(now()) @map("created_at")
+  updatedAt       DateTime                @updatedAt @map("updated_at")
+
+  financialRecords FinancialRecord[]
+  walletLogs       WalletLog[]
+  customerCourses  CustomerCourse[]
+  logs             CustomerTransactionLog[]
+
+  @@index([customerId, createdAt])
+  @@index([storeId, createdAt])
+  @@map("customer_transactions")
+}
+
+/// 交易歷程（建立時的調整內容、刪除時的原因與回溯明細）
+model CustomerTransactionLog {
+  id            Int                 @id @default(autoincrement())
+  transactionId Int                 @map("transaction_id")
+  transaction   CustomerTransaction @relation(fields: [transactionId], references: [id])
+  action        String // create / delete
+  operatorId    Int                 @map("operator_id")
+  operator      User                @relation(fields: [operatorId], references: [id])
+  reason        String?
+  detail        Json?
+  createdAt     DateTime            @default(now()) @map("created_at")
+
+  @@index([transactionId])
+  @@map("customer_transaction_logs")
 }

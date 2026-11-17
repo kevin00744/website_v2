@@ -196,7 +196,7 @@ export class LineService {
 
   async getCourses(customerId: number): Promise<CourseSummary[]> {
     const courses = await this.prisma.customerCourse.findMany({
-      where: { customerId },
+      where: { customerId, voidedAt: null },
       select: { totalSessions: true, usedSessions: true, serviceItem: { select: { name: true } } },
       orderBy: { createdAt: 'asc' },
     });

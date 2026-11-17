@@ -135,11 +135,16 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
  * Authorization header，後端的 JwtAuthGuard 收到沒有 token 的請求會直接 401，
  * 開出來的新分頁只會看到一段 JSON 錯誤訊息而不是 PDF。
  */
-export async function apiRequestBlob(path: string): Promise<Blob> {
+export async function apiRequestBlob(path: string, options: { method?: string; json?: unknown } = {}): Promise<Blob> {
   const send = () => {
     const token = getAuthToken();
     return fetch(`${resolveApiBaseUrl()}${path}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      method: options.method ?? 'GET',
+      headers: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(options.json !== undefined ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: options.json !== undefined ? JSON.stringify(options.json) : undefined,
     });
   };
   let response = await send();

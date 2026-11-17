@@ -59,7 +59,16 @@ export function deletePromotionPlan(storeId: number, planId: number): Promise<vo
 export function purchasePromotionPlan(
   storeId: number,
   planId: number,
-  dto: { customerId: number; staffId?: number; paymentMethod: PaymentMethod },
+  dto: {
+    customerId: number;
+    staffId?: number;
+    paymentMethod: PaymentMethod;
+    /** 結帳時調整：實收金額 / 贈送金額 / 各品項堂數 / 備註（選填） */
+    price?: number;
+    bonusAmount?: number;
+    items?: Array<{ serviceItemId: number; sessions: number }>;
+    adjustNote?: string;
+  },
 ): Promise<PurchaseResult> {
   return apiRequest<PurchaseResult>(`/stores/${storeId}/promotion-plans/${planId}/purchase`, {
     method: 'POST',

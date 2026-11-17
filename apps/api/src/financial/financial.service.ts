@@ -6,7 +6,7 @@ import { isAdminRole } from '../auth/role-access.util';
 import type { AuthenticatedUser } from '../auth/types';
 
 /** CSV 匯出排除備用金補充（內部資金移動），只含真實營業收支 */
-const EXPORT_CATEGORIES: FinancialCategory[] = ['sales', 'top_up', 'outsource_payout', 'daily_expense'];
+const EXPORT_CATEGORIES: FinancialCategory[] = ['sales', 'top_up', 'outsource_payout', 'daily_expense', 'refund'];
 
 export interface AddFinancialRecordDto {
   storeId: number;
@@ -64,7 +64,8 @@ export class FinancialService {
     const [store, records] = await Promise.all([
       this.prisma.store.findUnique({ where: { id: storeId }, select: { pettyCashBalance: true, name: true } }),
       this.prisma.financialRecord.findMany({
-        where: { storeId, createdAt: { gte: todayStart } },
+        // 被系統管理員刪除（回溯）的交易所產生的紀錄不列入
+        where: { storeId, createdAt: { gte: todayStart }, deletedAt: null },
         include: { performedBy: { select: { id: true, name: true } } },
         orderBy: { createdAt: 'desc' },
       }),
@@ -112,6 +113,7 @@ export class FinancialService {
     const records = await this.prisma.financialRecord.findMany({
       where: {
         storeId,
+        deletedAt: null,
         createdAt: { gte: fromDate, lte: toDate },
         ...(categories?.length ? { category: { in: categories } } : {}),
         ...(types?.length ? { type: { in: types } } : {}),
@@ -146,11 +148,12 @@ export class FinancialService {
       top_up: '儲值收入',
       outsource_payout: '外包費用',
       daily_expense: '日常雜支',
+      refund: '課程退費',
     };
     const TYPE_LABEL: Record<string, string> = { income: '收入', expense: '支出' };
 
     const rows = records.map((r) => [
-      new Date(r.createdAt).toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit' }),
+      new Date(r.createdAt).toLocaleDateString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'Asia/Taipei' }),
       `FR-${r.id}`,
       r.performedBy.name,
       `${TYPE_LABEL[r.type] ?? r.type} / ${CATEGORY_LABEL[r.category] ?? r.category}`,
@@ -351,6 +354,7 @@ export class FinancialService {
       where: {
         storeId,
         outsourcePaidAt: null,
+        isRolledBack: false,
         serviceItem: { isOutsourced: true },
       },
       include: {

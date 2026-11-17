@@ -16,6 +16,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   top_up: '儲值收入',
   outsource_payout: '外包費用',
   daily_expense: '日常雜支',
+  refund: '課程退費',
 };
 
 const PAYMENT_LABEL: Record<string, string> = {

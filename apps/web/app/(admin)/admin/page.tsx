@@ -16,8 +16,12 @@ export default function AdminWelcomePage() {
     ? NAVIGATION_CONFIG.filter((item) => !item.roleGuard || item.roleGuard(user.role)).slice(0, 6)
     : [];
 
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? '早安' : hour < 18 ? '午安' : '晚安';
+  // 問候語依「瀏覽器」的當地時間計算：伺服器是 UTC，若在 SSR 階段算會和台灣時間對不上（hydration 錯誤）
+  const [greeting, setGreeting] = useState('您好');
+  useEffect(() => {
+    const hour = new Date().getHours();
+    setGreeting(hour < 12 ? '早安' : hour < 18 ? '午安' : '晚安');
+  }, []);
 
   return (
     <div className="flex flex-col gap-8">

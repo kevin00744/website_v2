@@ -24,5 +24,6 @@ export const NAVIGATION_CONFIG: NavItem[] = [
   { href: '/promotion-plans',   label: '促銷方案',   icon: '🎁', roleGuard: isAdminOrManager },
   // LINE：除了會計以外都開放（頁內「設定狀態」只有 system_admin 看得到）
   { href: '/line',              label: 'LINE',       icon: '💬', roleGuard: (r) => r !== 'accountant' },
+  { href: '/consent-templates', label: '同意書管理', icon: '📝', roleGuard: isAdmin },
   { href: '/settings',          label: '個人設定',   icon: '⚙️' },
 ];

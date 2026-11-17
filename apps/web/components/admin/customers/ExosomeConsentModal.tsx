@@ -22,7 +22,7 @@ interface ExosomeConsentModalProps {
 type Step = 'fill-id' | 'staff-sig' | 'customer-sig';
 
 /**
- * 外泌體免責聲明書雙方簽署流程（事後補簽版本）：
+ * 同意書雙方簽署流程（事後補簽版本）：
  * [若無身分證] ① 補填身分證字號
  * ② 服務人員確認並簽名 → `POST /customers/:id/disclaimer/sign-staff`
  * ③ 顧客閱讀完整條款並簽名 → `POST /customers/:id/disclaimer/sign`
@@ -126,7 +126,7 @@ export function ExosomeConsentModal({
   return (
     <CenteredModal
       open={open}
-      title={`外泌體免責聲明書 — ${customerName}`}
+      title={`同意書簽署 — ${customerName}`}
       onClose={resetAndClose}
       maxWidthClassName="md:max-w-2xl"
     >
@@ -151,7 +151,7 @@ export function ExosomeConsentModal({
             <div className="rounded-kiosk border-2 border-amber-300 bg-amber-50 p-4">
               <p className="text-kiosk-base font-bold text-amber-800">⚠️ 需先補填身分證字號</p>
               <p className="mt-1 text-sm text-amber-700">
-                外泌體免責聲明書需要顧客身分證字號作為存證資料，請先補填後再進行簽署。
+                同意書需要顧客身分證字號作為存證資料，請先補填後再進行簽署。
               </p>
             </div>
             <KioskInput
@@ -176,7 +176,7 @@ export function ExosomeConsentModal({
         {step === 'staff-sig' && (
           <>
             <p className="text-sm text-slate-500">
-              請服務人員確認顧客資料無誤後在下方簽名，確認後系統將自動建立免責聲明書 PDF。
+              請服務人員確認顧客資料無誤後在下方簽名，確認後系統將自動建立同意書 PDF。
             </p>
             {error && <p className="text-kiosk-base font-semibold text-kiosk-danger">⚠️ {error}</p>}
             <InlineSignaturePad

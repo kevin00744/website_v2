@@ -317,7 +317,7 @@ export function NewCustomerWizard({ onCreated, onClose }: NewCustomerWizardProps
             />
             <label htmlFor="is-exosome-user" className="cursor-pointer text-kiosk-base text-amber-800">
               <span className="font-bold">此顧客使用外泌體療程</span>
-              <p className="mt-0.5 text-sm">勾選後系統將在 POS 結帳時提醒確認外泌體同意書簽署。</p>
+              <p className="mt-0.5 text-sm">勾選後系統將在 POS 結帳時提醒確認同意書簽署。</p>
             </label>
           </div>
 

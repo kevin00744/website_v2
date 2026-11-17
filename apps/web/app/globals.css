@@ -10,3 +10,25 @@ body {
 * {
   -webkit-touch-callout: none;
 }
+
+/* 文字大小切換（lib/text-size.ts）：所有字級與間距都是 rem，改根字級就整體縮放 */
+html[data-text-size='lg'] {
+  font-size: 112.5%;
+}
+html[data-text-size='xl'] {
+  font-size: 125%;
+}
+
+/* 主畫面 App 全螢幕（viewport-fit=cover）時避開瀏海與 Home 條 */
+@layer utilities {
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+  .pb-safe {
+    /* 至少保留 1rem（等同 p-4 的下緣），有 Home 條時再加大 */
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+  .bottom-safe {
+    bottom: env(safe-area-inset-bottom);
+  }
+}
