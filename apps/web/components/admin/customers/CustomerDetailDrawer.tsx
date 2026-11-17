@@ -69,6 +69,8 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
   const [treatmentModalOpen, setTreatmentModalOpen] = useState(false);
   const [treatmentKey, setTreatmentKey] = useState(0);
   const [posModalOpen, setPosModalOpen] = useState(false);
+  /** 從課程分頁「使用課程」開啟 POS 時要扣的品項 */
+  const [posCourseItemId, setPosCourseItemId] = useState<number>();
   const [exosomeModalOpen, setExosomeModalOpen] = useState(false);
   const [disclaimerPdfError, setDisclaimerPdfError] = useState<string>();
   const [user, setUser] = useState<AuthUser>();
@@ -407,6 +409,19 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
                   </div>
                 </div>
 
+                {/* 直接使用課程：開 POS 並跳到扣堂簽名畫面 */}
+                {group.remainingSessions > 0 && detail && (
+                  <KioskButton
+                    variant="primary"
+                    onClick={() => {
+                      setPosCourseItemId(group.serviceItem.id);
+                      setPosModalOpen(true);
+                    }}
+                  >
+                    ✓ 使用課程
+                  </KioskButton>
+                )}
+
                 {/* 若來自多張課程，顯示各課程明細（供管理操作） */}
                 {group.items.length > 1 && (
                   <div className="flex flex-col gap-2 border-t border-slate-100 pt-2">
@@ -496,11 +511,24 @@ export function CustomerDetailDrawer({ customerId, onUpdated, onDeleted }: Custo
           customerName={detail.name}
           isExosomeUser={detail.isExosomeUser}
           disclaimerFullySigned={detail.disclaimerFullySigned}
-          onClose={() => setPosModalOpen(false)}
-          onCompleted={() => {
+          initialCourseServiceItemId={posCourseItemId}
+          onClose={() => {
             setPosModalOpen(false);
-            setTab('treatments');
+            setPosCourseItemId(undefined);
+          }}
+          onCompleted={() => {
+            const fromCourseTab = posCourseItemId !== undefined;
+            setPosModalOpen(false);
+            setPosCourseItemId(undefined);
             setTreatmentKey((k) => k + 1);
+            if (fromCourseTab) {
+              // 從課程分頁使用：留在課程分頁並更新剩餘堂數
+              void loadCourses();
+            } else {
+              setTab('treatments');
+              // 結帳可能扣了堂數或買了課程，下次切到課程分頁時重新載入
+              setCourses(undefined);
+            }
           }}
         />
       )}

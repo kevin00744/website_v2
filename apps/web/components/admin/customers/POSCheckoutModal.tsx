@@ -65,6 +65,8 @@ interface POSCheckoutModalProps {
   customerName: string;
   isExosomeUser: boolean;
   disclaimerFullySigned: boolean;
+  /** 從課程分頁「使用課程」進來：載入完成後直接進入該品項的扣堂簽名畫面 */
+  initialCourseServiceItemId?: number;
   onClose: () => void;
   onCompleted: () => void;
 }
@@ -93,9 +95,13 @@ export function POSCheckoutModal({
   customerName,
   isExosomeUser,
   disclaimerFullySigned,
+  initialCourseServiceItemId,
   onClose,
   onCompleted,
 }: POSCheckoutModalProps) {
+  /** 是否從「使用課程」快速入口進入扣堂（取消／失敗時回第一頁，而不是付款頁） */
+  const [quickCourse, setQuickCourse] = useState(false);
+  const autoStartedRef = useRef(false);
   const [step, setStep] = useState<Step>('items');
   const [purchaseMode, setPurchaseMode] = useState<PurchaseMode>('service');
 
@@ -176,6 +182,8 @@ export function POSCheckoutModal({
       setSubmitError(undefined);
       setSubmitting(false);
       setSuccessSummary(undefined);
+      setQuickCourse(false);
+      autoStartedRef.current = false;
       clearTimeout(successTimerRef.current);
       return;
     }
@@ -244,9 +252,9 @@ export function POSCheckoutModal({
   const stablePlanTokens = useMemo(() => planDiffTokens, [planTokensKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 按 serviceItemId 合併同一服務品項的多張課程（A+B 套裝各含相同品項時顯示合計）
-  const mergedCourses = customerCourses
+  const mergedCourses = allCourses
     ? Object.values(
-        customerCourses.reduce(
+        allCourses.reduce(
           (acc, c) => {
             const key = c.serviceItem.id;
             if (!acc[key]) {
@@ -261,6 +269,34 @@ export function POSCheckoutModal({
         ),
       )
     : undefined;
+  /** 還有剩餘堂數的課程（第一頁「使用課程」快速入口） */
+  const usableCourses = mergedCourses?.filter((c) => c.remainingSessions > 0) ?? [];
+  const selectedMergedCourseForUse = mergedCourses?.find((c) => String(c.serviceItem.id) === selectedCourseId);
+
+  /** 一鍵使用課程：直接跳到簽名畫面（預設扣 1 堂，簽名前可調整） */
+  function startCourseUse(serviceItemId: number) {
+    setPurchaseMode('service');
+    setConsumptionType('course_deduction');
+    setSelectedItemId(String(serviceItemId));
+    setSelectedCourseId(String(serviceItemId));
+    setSessionsDeducted('1');
+    setCustomerCourses(allCourses ?? []);
+    setAdjustNote('');
+    setStep1Error(undefined);
+    setStep2Error(undefined);
+    setSubmitError(undefined);
+    setQuickCourse(true);
+    setStep('signature');
+  }
+
+  // 從課程分頁進來：課程載入完成後自動進入扣堂（未簽同意書的外泌體顧客停在第一頁顯示提醒）
+  useEffect(() => {
+    if (!open || !initialCourseServiceItemId || autoStartedRef.current || !allCourses) return;
+    autoStartedRef.current = true;
+    if (exosomeBlocked) return;
+    const target = allCourses.some((c) => c.serviceItem.id === initialCourseServiceItemId && c.remainingSessions > 0);
+    if (target) startCourseUse(initialCourseServiceItemId);
+  }, [open, initialCourseServiceItemId, allCourses, exosomeBlocked]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 切換消費方式時重置支付欄位
   async function handleConsumptionTypeChange(ct: ConsumptionType) {
@@ -459,7 +495,8 @@ export function POSCheckoutModal({
       successTimerRef.current = setTimeout(onCompleted, 2500);
     } catch (err) {
       setSubmitError(err instanceof ApiError ? err.message : '結帳失敗，請稍後再試');
-      if (needsSignature) setStep('payment');
+      // 快速使用課程：留在簽名畫面顯示錯誤；一般流程回付款頁
+      if (needsSignature && !quickCourse) setStep('payment');
     } finally {
       setSubmitting(false);
     }
@@ -512,6 +549,28 @@ export function POSCheckoutModal({
                 <p className="mt-1 text-sm text-amber-700">
                   請先至顧客基本資料頁補齊身分證字號，並完成同意書雙方簽名，再進行結帳。
                 </p>
+              </div>
+            )}
+
+            {/* 有剩餘課程：直接列出，點一下就進入扣堂簽名 */}
+            {usableCourses.length > 0 && (
+              <div className="flex flex-col gap-2 rounded-kiosk border-2 border-green-200 bg-green-50/60 p-3">
+                <p className="text-kiosk-base font-bold text-green-800">📚 使用課程</p>
+                {usableCourses.map((course) => (
+                  <button
+                    key={course.serviceItem.id}
+                    type="button"
+                    disabled={exosomeBlocked}
+                    onClick={() => startCourseUse(course.serviceItem.id)}
+                    className="flex items-center justify-between gap-3 rounded-kiosk border-2 border-green-300 bg-white px-4 py-3 text-left transition-colors hover:border-green-500 disabled:opacity-40"
+                  >
+                    <div className="min-w-0">
+                      <p className="truncate text-kiosk-base font-semibold text-slate-900">{course.serviceItem.name}</p>
+                      <p className="text-sm text-slate-500">剩 {course.remainingSessions} 堂（已用 {course.usedSessions} / 共 {course.totalSessions}）</p>
+                    </div>
+                    <span className="shrink-0 rounded-kiosk bg-green-600 px-4 py-2 text-sm font-bold text-white">使用 →</span>
+                  </button>
+                ))}
               </div>
             )}
 
@@ -935,12 +994,50 @@ export function POSCheckoutModal({
               </p>
               <p className="text-sm text-slate-500">顧客：{customerName}</p>
             </div>
+            {/* 扣課程：簽名前可直接調整堂數與服務人員 */}
+            {consumptionType === 'course_deduction' && selectedMergedCourseForUse && (
+              <div className="flex flex-col gap-3 rounded-kiosk border border-slate-200 bg-white p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-kiosk-base font-semibold text-slate-900">本次扣除堂數</p>
+                    <p className="text-sm text-slate-500">剩 {selectedMergedCourseForUse.remainingSessions} 堂</p>
+                  </div>
+                  <Stepper
+                    value={Number(sessionsDeducted) || 1}
+                    min={1}
+                    onChange={(v) => setSessionsDeducted(String(Math.min(v, selectedMergedCourseForUse.remainingSessions)))}
+                    suffix="堂"
+                  />
+                </div>
+                {quickCourse && staff && (
+                  <KioskSelect
+                    label="服務人員"
+                    placeholder="請選擇服務人員…"
+                    options={staff.map((s) => ({ value: String(s.id), label: s.name }))}
+                    value={selectedStaffId}
+                    onChange={(e) => setSelectedStaffId(e.target.value)}
+                  />
+                )}
+              </div>
+            )}
             <InlineSignaturePad
               label="請顧客確認消費明細並在下方簽名"
               submitting={submitting}
               errorMessage={submitError}
               onConfirm={({ signatureImageUrl }) => void handleServiceCheckout(signatureImageUrl)}
-              onCancel={() => { setStep('payment'); setSubmitError(undefined); }}
+              onCancel={() => {
+                setSubmitError(undefined);
+                if (quickCourse) {
+                  // 快速入口取消：回第一頁並還原成一般服務模式
+                  setQuickCourse(false);
+                  setConsumptionType('single_purchase');
+                  setSelectedItemId('');
+                  setSelectedCourseId('');
+                  setStep('items');
+                } else {
+                  setStep('payment');
+                }
+              }}
             />
           </>
         )}
